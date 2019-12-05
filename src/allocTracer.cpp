@@ -28,6 +28,7 @@ Trap AllocTracer::_outside_tlab("_ZN11AllocTracer34send_allocation_outside_tlab_
 // JDK 10+
 Trap AllocTracer::_in_new_tlab2("_ZN11AllocTracer27send_allocation_in_new_tlab");
 Trap AllocTracer::_outside_tlab2("_ZN11AllocTracer28send_allocation_outside_tlab");
+void (*AllocTracer::_next_handler)(int, siginfo_t *, void *) = 0;
 
 bool AllocTracer::_supports_class_names = false;
 u64 AllocTracer::_interval;
@@ -55,17 +56,17 @@ bool Trap::resolve(NativeCodeCache* libjvm) {
 // Insert breakpoint at the very first instruction
 void Trap::install() {
     if (_entry != NULL) {
-        _saved_insn = *_entry;
-        *_entry = BREAKPOINT;
-        flushCache(_entry);
+        _saved_insn = *(_entry + BREAKPOINT_OFFSET);
+        *(_entry + BREAKPOINT_OFFSET) = BREAKPOINT;
+        flushCache(_entry + BREAKPOINT_OFFSET);
     }
 }
 
 // Clear breakpoint - restore the original instruction
 void Trap::uninstall() {
     if (_entry != NULL) {
-        *_entry = _saved_insn;
-        flushCache(_entry);
+        *(_entry + BREAKPOINT_OFFSET) = _saved_insn;
+        flushCache(_entry + BREAKPOINT_OFFSET);
     }
 }
 
@@ -73,9 +74,11 @@ void Trap::uninstall() {
 // Called whenever our breakpoint trap is hit
 void AllocTracer::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
     StackFrame frame(ucontext);
+    struct sigaction oact, nex;
 
+    sigaction( signo, NULL, &oact);
     // PC points either to BREAKPOINT instruction or to the next one
-    if (frame.pc() - (uintptr_t)_in_new_tlab._entry <= sizeof(instruction_t)) {
+    if (frame.pc() - (uintptr_t)(_in_new_tlab._entry + BREAKPOINT_OFFSET) <= sizeof(instruction_t)) {
         // send_allocation_in_new_tlab_event(KlassHandle klass, size_t tlab_size, size_t alloc_size)
         recordAllocation(ucontext, frame, frame.arg0(), frame.arg1(), false);
     } else if (frame.pc() - (uintptr_t)_outside_tlab._entry <= sizeof(instruction_t)) {
@@ -89,6 +92,23 @@ void AllocTracer::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
         recordAllocation(ucontext, frame, frame.arg0(), frame.arg2(), true);
     }
 }
+        recordAllocation(ucontext, frame, frame.arg0(), frame.arg1(), false);
+    } else if (frame.pc() - (uintptr_t)(_outside_tlab._entry + BREAKPOINT_OFFSET) <= sizeof(instruction_t)) {
+        // send_allocation_outside_tlab_event(KlassHandle klass, size_t alloc_size);
+        recordAllocation(ucontext, frame, frame.arg0(), frame.arg1(), true);
+    } else if (frame.pc() - (uintptr_t)(_in_new_tlab2._entry + BREAKPOINT_OFFSET) <= sizeof(instruction_t)) {
+        // send_allocation_in_new_tlab(Klass* klass, HeapWord* obj, size_t tlab_size, size_t alloc_size, Thread* thread)
+        recordAllocation(ucontext, frame, frame.arg0(), frame.arg2(), false);
+    } else if (frame.pc() - (uintptr_t)(_outside_tlab2._entry + BREAKPOINT_OFFSET) <= sizeof(instruction_t)) {
+        // send_allocation_outside_tlab(Klass* klass, HeapWord* obj, size_t alloc_size, Thread* thread)
+        recordAllocation(ucontext, frame, frame.arg0(), frame.arg2(), true);
+    } else {
+        // Not our trap, call the the VM's handler if there is one
+        if ((void*)_next_handler != SIG_DFL && (void*)_next_handler != SIG_ERR && (void*)_next_handler != SIG_IGN && _next_handler != NULL ) {
+            (*_next_handler)(signo, siginfo, ucontext);
+        }
+        return;
+   }
 
 void AllocTracer::recordAllocation(void* ucontext, StackFrame& frame, uintptr_t rklass, uintptr_t rsize, bool outside_tlab) {
     // Leave the trapped function by simulating "ret" instruction
@@ -135,7 +155,11 @@ Error AllocTracer::start(Arguments& args) {
     _interval = args._interval;
     _allocated_bytes = 0;
 
+    if (_next_handler == NULL) {
+        _next_handler =  (void (*)(int, siginfo_t*, void*)) OS::getSignalHandler(SIGTRAP);
+    }
     OS::installSignalHandler(SIGTRAP, signalHandler);
+
 
     _in_new_tlab.install();
     _outside_tlab.install();

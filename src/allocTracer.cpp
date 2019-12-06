@@ -28,7 +28,7 @@ Trap AllocTracer::_outside_tlab("_ZN11AllocTracer34send_allocation_outside_tlab_
 // JDK 10+
 Trap AllocTracer::_in_new_tlab2("_ZN11AllocTracer27send_allocation_in_new_tlab");
 Trap AllocTracer::_outside_tlab2("_ZN11AllocTracer28send_allocation_outside_tlab");
-void (*AllocTracer::_next_handler)(int, siginfo_t *, void *) = 0;
+void (*AllocTracer::_next_handler)(int, siginfo_t *, void *) = NULL;
 
 bool AllocTracer::_supports_class_names = false;
 u64 AllocTracer::_interval;
@@ -53,7 +53,8 @@ bool Trap::resolve(NativeCodeCache* libjvm) {
     return false;
 }
 
-// Insert breakpoint at the very first instruction
+// Insert breakpoint - usually at the very first instruction
+// but some architectures require an offset (see arch.h)
 void Trap::install() {
     if (_entry != NULL) {
         _saved_insn = *(_entry + BREAKPOINT_OFFSET);
@@ -155,11 +156,11 @@ Error AllocTracer::start(Arguments& args) {
     _interval = args._interval;
     _allocated_bytes = 0;
 
+    // remember the previously installed handler to call it next (only once)
     if (_next_handler == NULL) {
         _next_handler =  (void (*)(int, siginfo_t*, void*)) OS::getSignalHandler(SIGTRAP);
     }
     OS::installSignalHandler(SIGTRAP, signalHandler);
-
 
     _in_new_tlab.install();
     _outside_tlab.install();

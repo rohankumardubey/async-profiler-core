@@ -117,6 +117,7 @@ class Arguments {
     long _interval;
     int  _jstackdepth;
     int _framebuf;
+    int _recover;
     const char* _file;
     const char* _filter;
     int _include;
@@ -143,6 +144,7 @@ class Arguments {
         _interval(0),
         _jstackdepth(DEFAULT_JSTACKDEPTH),
         _framebuf(DEFAULT_FRAMEBUF),
+        _recover(0),
         _file(NULL),
         _filter(NULL),
         _include(0),

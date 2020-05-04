@@ -178,6 +178,9 @@ Error Arguments::parse(const char* args) {
                     return Error("framebuf must be > 0");
                 }
 
+            CASE("recover")
+                _recover = value == NULL ? 0 : atoi(value);
+
             CASE("file")
                 if (value == NULL || value[0] == 0) {
                     return Error("file must not be empty");

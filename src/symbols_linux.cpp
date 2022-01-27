@@ -140,6 +140,7 @@ class ElfParser {
     void loadSymbols(bool use_debug);
     bool loadSymbolsUsingBuildId();
     bool loadSymbolsUsingDebugLink();
+    bool checkGlobalOffsetTable(ElfSection* got);
     void loadSymbolTable(ElfSection* symtab);
     void addRelocationSymbols(ElfSection* reltab, const char* plt);
 
@@ -228,7 +229,13 @@ loaded:
 
         // Find the bounds of the Global Offset Table
         ElfSection* got = findSection(SHT_PROGBITS, ".got.plt");
-        if (got != NULL || (got = findSection(SHT_PROGBITS, ".got")) != NULL) {
+        if (got == NULL || !checkGlobalOffsetTable(got)) {
+            got = findSection(SHT_NOBITS, ".plt");
+            if (got == NULL || !checkGlobalOffsetTable(got)) {
+                got = findSection(SHT_PROGBITS, ".got");
+            }
+        }
+        if (got != NULL) {
             _cc->setGlobalOffsetTable(_base + got->sh_addr, got->sh_size);
         }
 
@@ -239,6 +246,10 @@ loaded:
             _cc->setDwarfTable(dwarf.table(), dwarf.count());
         }
     }
+}
+
+bool ElfParser::checkGlobalOffsetTable(ElfSection* got) {
+    return _cc->checkGlobalOffsetTable(_base + got->sh_addr, got->sh_size);
 }
 
 // Load symbols from /usr/lib/debug/.build-id/ab/cdef1234.debug, where abcdef1234 is Build ID

@@ -18,6 +18,7 @@
 #include <string.h>
 #include "codeCache.h"
 #include "dwarf.h"
+#include <dlfcn.h>
 
 
 char* NativeFunc::create(const char* name, short lib_index) {
@@ -175,8 +176,16 @@ void CodeCache::setGlobalOffsetTable(const void* start, unsigned int size) {
     _got_end = (const void**) ((const char*)start + size);
 }
 
+bool CodeCache::checkGlobalOffsetTable(const void* start, unsigned int size) {
+    return findGlobalOffsetEntry((const void**) start, (const void**) ((const char*)start + size), (const void*)dlopen) != NULL;
+}
+
 const void** CodeCache::findGlobalOffsetEntry(const void* address) {
-    for (const void** entry = _got_start; entry < _got_end; entry++) {
+    return findGlobalOffsetEntry(_got_start, _got_end, address);
+}
+
+const void** CodeCache::findGlobalOffsetEntry(const void** start, const void** end, const void* address) {
+    for (const void** entry = start; entry < end; entry++) {
         if (*entry == address) {
             return entry;
         }

@@ -144,10 +144,14 @@ class CodeCache {
     const void* findSymbolByPrefix(const char* prefix, int prefix_len);
 
     void setGlobalOffsetTable(const void* start, unsigned int size);
+    bool checkGlobalOffsetTable(const void* start, unsigned int size);
     const void** findGlobalOffsetEntry(const void* address);
 
     void setDwarfTable(FrameDesc* table, int length);
     FrameDesc* findFrameDesc(const void* pc);
+
+private:
+    const void** findGlobalOffsetEntry(const void** start, const void** end, const void* address);
 };
 
 #endif // _CODECACHE_H

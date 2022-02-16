@@ -214,8 +214,8 @@ static const char FLAMEGRAPH_HEADER[] =
     "\t\t\t\t\t\t\t\tf.inlined + ',\\nCompiled: ' + f.compiled + ')';\n"
     "\t\t\t\t\t} else {\n"
     "\t\t\t\t\t\tcanvas.title = f.title + '\\n(' + samples(f.width) + ', ' + pct(f.width, levels[0][0].width) +\n"
-    "\t\t\t\t\t\t\t\t'\%%,\\nInterpreted on top: ' + f.interpreted + ',\\nInlined on top: ' +\n"
-    "\t\t\t\t\t\t\t\tf.inlined + ',\\nCompiled on top: ' + f.compiled + ')';\n"
+    "\t\t\t\t\t\t\t\t'\%%,\\nInterpreted: ' + f.interpreted + ',\\nInlined: ' +\n"
+    "\t\t\t\t\t\t\t\tf.inlined + ',\\nCompiled: ' + f.compiled + ')';\n"
     "\t\t\t\t\t}\n"
     "\t\t\t\t} else {\n"
     "\t\t\t\t\tcanvas.title = f.title + '\\n(' + samples(f.width) + ', ' + pct(f.width, levels[0][0].width) + '\%%)';\n"
@@ -579,10 +579,11 @@ void FlameGraph::printTreeFrame(std::ostream& out, const Trie& f, int level) {
 
 // TODO: Reuse frame type embedded in ASGCT_CallFrame
 int FlameGraph::frameType(std::string& name, u64 total, u64 interp, u64 inlined, u64 compiled) {
-    if (StringUtils::endsWith(name, "_[j]", 4)) {
+    u64 max = std::max(interp, std::max(inlined, compiled));
+    if ((StringUtils::endsWith(name, "_[j]", 4) && (max != inlined && max != 0)) || (max == compiled && max != 0)) {
         name = name.substr(0, name.length() - 4);
         return FRAME_JIT_COMPILED;
-    } else if (StringUtils::endsWith(name, "_[i]", 4)) {
+    } else if (StringUtils::endsWith(name, "_[i]", 4) || (max == inlined && max != 0)) {
         name = name.substr(0, name.length() - 4);
         return FRAME_INLINED;
     } else if (StringUtils::endsWith(name, "_[k]", 4)) {

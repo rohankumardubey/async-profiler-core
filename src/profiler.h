@@ -152,7 +152,7 @@ class Profiler {
     Engine* allocEngine();
     Engine* activeEngine();
     Error checkJvmCapabilities();
-    char getFrameType(jint bci);
+    char getFrameType(ASGCT_CallFrame frame);
 
     time_t addTimeout(time_t start, int timeout);
     void startTimer(int timeout);

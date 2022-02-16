@@ -1279,27 +1279,27 @@ void Profiler::dumpFlameGraph(std::ostream& out, Arguments& args, bool tree) {
             // Thread frames always come first
             if (_add_sched_frame) {
                 const char* frame_name = fn.name(trace->frames[--num_frames]);
-                char next_type = getFrameType(trace->frames[num_frames].bci);
+                char next_type = getFrameType(trace->frames[num_frames]);
                 f = f->addChild(frame_name, samples, type);
                 type = next_type;
             }
             if (_add_thread_frame) {
                 const char* frame_name = fn.name(trace->frames[--num_frames]);
-                char next_type = getFrameType(trace->frames[num_frames].bci);
+                char next_type = getFrameType(trace->frames[num_frames]);
                 f = f->addChild(frame_name, samples, type);
                 type = next_type;
             }
 
             for (int j = 0; j < num_frames; j++) {
                 const char* frame_name = fn.name(trace->frames[j]);
-                char next_type = getFrameType(trace->frames[j].bci);
+                char next_type = getFrameType(trace->frames[j]);
                 f = f->addChild(frame_name, samples, type);
                 type = next_type;
             }
         } else {
             for (int j = num_frames - 1; j >= 0; j--) {
                 const char* frame_name = fn.name(trace->frames[j]);
-                char next_type = getFrameType(trace->frames[j].bci);
+                char next_type = getFrameType(trace->frames[j]);
                 f = f->addChild(frame_name, samples, type);
                 type = next_type;
             }
@@ -1311,9 +1311,9 @@ void Profiler::dumpFlameGraph(std::ostream& out, Arguments& args, bool tree) {
 }
 
 
-char Profiler::getFrameType(jint bci) {
+char Profiler::getFrameType(ASGCT_CallFrame frame) {
     char frame_type;
-    jint raw_bci = removeTypeInfoFromFrame(bci);
+    jint raw_bci = frame.bci;
     if (raw_bci < BCI_SMALLEST_USED_BY_VM) {
         switch (raw_bci) {
         case BCI_NATIVE_FRAME:
@@ -1338,13 +1338,20 @@ char Profiler::getFrameType(jint bci) {
             return FRAME_TYPE_INTERNALERR;
         }
     } else {
-        switch ((bci & BCI_TYPE_MASK) >> 24) {
+        switch (frame.get_frame_type()) {
         case FRAME_JIT_COMPILED:
-            return FRAME_TYPE_COMPILED_JAVA;
+            if (frame.get_comp_level() == CompLevel_full_optimization) {
+                return FRAME_TYPE_C2;
+            }
+            return FRAME_TYPE_C1;
         case FRAME_INTERPRETED:
             return FRAME_TYPE_INTERPRETED_JAVA;
         case FRAME_INLINED:
             return FRAME_TYPE_INLINED_JAVA;
+        case FRAME_CPP:
+            return FRAME_TYPE_CPP;
+        case FRAME_NATIVE:
+            return FRAME_NATIVE;
         default:
             return FRAME_TYPE_UNKNOWN_JAVA;
         }
@@ -1406,7 +1413,7 @@ void Profiler::dumpText(std::ostream& out, Arguments& args) {
             for (int j = 0; j < trace->num_frames; j++) {
                 const char* frame_name = fn.name(trace->frames[j]);
                 jint bci = trace->frames[j].bci;
-                char frame_type = getFrameType(bci);
+                char frame_type = getFrameType(trace->frames[j]);
                 bci = removeTypeInfoFromFrame(bci);
                 snprintf(buf, sizeof(buf) - 1, "  [%2d] %c %5d %s\n", j, frame_type, bci, frame_name);
                 out << buf;

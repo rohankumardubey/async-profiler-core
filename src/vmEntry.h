@@ -85,6 +85,8 @@ enum StoredFrameType {
     FRAME_TYPE_UNKNOWN_JAVA     = 'j',
     FRAME_TYPE_CPP              = 'p',
     FRAME_TYPE_BOTTOM           = 'b',
+    FRAME_TYPE_C1               = '1',
+    FRAME_TYPE_C2               = '2',
 };
 
  struct ASGCT_CallFrame {

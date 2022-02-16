@@ -121,7 +121,7 @@ bool VM::init(JavaVM* vm, bool attach) {
     }
 
     _libjvm = getLibraryHandle("libjvm.so");
-    _asyncGetCallTrace = (AsyncGetCallTrace)dlsym(_libjvm, "AsyncGetCallTrace");
+    _asyncGetCallTrace = (AsyncGetCallTrace)dlsym(_libjvm, "AsyncGetCallTrace2");
     _getManagement = (JVM_GetManagement)dlsym(_libjvm, "JVM_GetManagement");
 
     Profiler* profiler = Profiler::instance();

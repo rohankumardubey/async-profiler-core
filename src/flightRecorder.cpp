@@ -251,7 +251,7 @@ class Lookup {
             mi->_mark = true;
             if (method == NULL) {
                 fillNativeMethodInfo(mi, "unknown");
-            } else if (frame.bci == BCI_NATIVE_FRAME || frame.bci == BCI_ERROR) {
+            } else if (frame.is_non_java() || frame.bci == BCI_ERROR) {
                 fillNativeMethodInfo(mi, (const char*)method);
             } else {
                 fillJavaMethodInfo(mi, method, getFrameTypeId(frame.bci), first_time);
@@ -996,7 +996,8 @@ class Recording {
             for (int i = 0; i < trace->num_frames; i++) {
                 MethodInfo* mi = lookup->resolveMethod(trace->frames[i]);
                 buf->putVar32(mi->_key);
-                jint bci = removeTypeInfoFromFrame(trace->frames[i].bci);
+                jint bci = trace->frames[i].bci;
+                FrameTypeId type = (FrameTypeId)trace->frames[i].get_frame_type();
                 if (bci >= 0) {
                     bci &= 0xffffff;
                     buf->putVar32(mi->getLineNumber(bci));

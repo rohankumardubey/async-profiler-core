@@ -314,6 +314,15 @@ int Profiler::getNativeTrace(void* ucontext, ASGCT_CallFrame* frames, int event_
     return convertNativeTrace(native_frames, callchain, frames);
 }
 
+void Profiler::fillNativeTraceMethods(int number, ASGCT_CallFrame* frames) {
+    for (int i = 0; i < number; i++) {
+        if (frames[i].bci == -4) { // a native frame
+            frames[i].bci = BCI_NATIVE_FRAME;
+            frames[i].method_id = (jmethodID)findNativeMethod(frames[i].machinepc);
+        }
+    }
+}
+
 int Profiler::convertNativeTrace(int native_frames, const void** callchain, ASGCT_CallFrame* frames) {
     int depth = 0;
     jmethodID prev_method = NULL;
@@ -333,6 +342,8 @@ int Profiler::convertNativeTrace(int native_frames, const void** callchain, ASGC
         } else {
             frames[depth].bci = BCI_NATIVE_FRAME;
             frames[depth].method_id = prev_method = current_method;
+            frames[depth].machinepc = (void*)callchain[i];
+            frames[depth].type = encode_type(FRAME_NATIVE, 0);
             depth++;
         }
     }
@@ -544,6 +555,7 @@ inline int Profiler::convertFrames(jvmtiFrameInfo* jvmti_frames, ASGCT_CallFrame
         jint bci = jvmti_frames[i].location;
         frames[i].method_id = jvmti_frames[i].method;
         frames[i].bci = bci;
+        frames[i].type = encode_type(FRAME_INTERPRETED, 0);
     }
     return num_frames;
 } 
@@ -659,15 +671,14 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
         // Events like object allocation happen at known places where it is safe to call JVM TI,
         // but not directly, since the thread is in_vm rather than in_native
         num_frames += getJavaTraceInternal(jvmti_frames + num_frames, frames + num_frames, _max_stack_depth);
-    } else if (event_type >= BCI_ALLOC_OUTSIDE_TLAB && !VM::isOpenJ9()) {
-        // Object allocation in HotSpot happens at known places where it is safe to call JVM TI,
+    } else {//if (evqent_type >= BCI_ALLOC_OUTSIDE_TLAB && !VM::isOpenJ9()) {
         num_frames += getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
-    } else {
+    /*} else {
         // Lock events and instrumentation events can safely call synchronous JVM TI stack walker.
         // Skip Instrument.recordSample() method
         int start_depth = event_type == BCI_INSTRUMENT ? 1 : 0;
         num_frames += getJavaTraceJvmti(jvmti_frames + num_frames, frames + num_frames, start_depth, _max_stack_depth);
-    }
+    */}
 
     if (num_frames == 0) {
         num_frames += makeEventFrame(frames + num_frames, BCI_ERROR, (uintptr_t)"no_Java_frame");
@@ -679,6 +690,7 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
     if (_add_sched_frame) {
         num_frames += makeEventFrame(frames + num_frames, BCI_ERROR, (uintptr_t)OS::schedPolicy(0));
     }
+    fillNativeTraceMethods(_max_stack_depth, frames);
 
     u32 call_trace_id = _call_trace_storage.put(num_frames, frames, counter);
     _jfr.recordEvent(lock_index, tid, call_trace_id, event_type, event, counter);

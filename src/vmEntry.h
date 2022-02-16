@@ -87,16 +87,35 @@ enum StoredFrameType {
     FRAME_TYPE_BOTTOM           = 'b',
 };
 
-typedef struct {
+ struct ASGCT_CallFrame {
     jint bci;
     jmethodID method_id;
-} ASGCT_CallFrame;
+    void *machinepc;
+    // first one bytes: FrameTypeId, then one byte for the CompLevel
+    int16_t type;
 
-typedef struct {
+    int get_comp_level() {
+        return type >> 8;
+    }
+
+    int get_frame_type() {
+        return type & 0xff;
+    }
+
+    bool is_non_java() { return get_frame_type() == FRAME_NATIVE || 
+        get_frame_type() == FRAME_KERNEL || get_frame_type() == FRAME_CPP; }
+  
+};
+
+int16_t encode_type(int frame_type, int comp_level) {
+  return frame_type + (comp_level << 8);
+}
+
+struct ASGCT_CallTrace {
     JNIEnv* env;
     jint num_frames;
     ASGCT_CallFrame* frames;
-} ASGCT_CallTrace;
+};
 
 typedef void (*AsyncGetCallTrace)(ASGCT_CallTrace*, jint, void*);
 
@@ -104,6 +123,16 @@ typedef struct {
     void* unused[38];
     jstring (JNICALL *ExecuteDiagnosticCommand)(JNIEnv*, jstring);
 } VMManagement;
+
+enum CompLevel {
+  CompLevel_any               = -1,        // Used for querying the state
+  CompLevel_all               = -1,        // Used for changing the state
+  CompLevel_none              = 0,         // Interpreter
+  CompLevel_simple            = 1,         // C1
+  CompLevel_limited_profile   = 2,         // C1, invocation & backedge counters
+  CompLevel_full_profile      = 3,         // C1, invocation & backedge counters + mdo
+  CompLevel_full_optimization = 4          // C2 or JVMCI
+};
 
 typedef VMManagement* (*JVM_GetManagement)(jint);
 

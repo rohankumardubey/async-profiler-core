@@ -215,6 +215,7 @@ class Profiler {
     Error flushJfr();
     Error dump(std::ostream& out, Arguments& args);
     void switchThreadEvents(jvmtiEventMode mode);
+    void fillNativeTraceMethods(int number, ASGCT_CallFrame* frames);
     int convertNativeTrace(int native_frames, const void** callchain, ASGCT_CallFrame* frames);
     void recordSample(void* ucontext, u64 counter, jint event_type, Event* event);
     void recordExternalSample(u64 counter, int tid, int num_frames, ASGCT_CallFrame* frames);

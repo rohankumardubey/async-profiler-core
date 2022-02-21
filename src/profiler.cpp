@@ -315,10 +315,19 @@ int Profiler::getNativeTrace(void* ucontext, ASGCT_CallFrame* frames, int event_
 }
 
 void Profiler::fillNativeTraceMethods(int number, ASGCT_CallFrame* frames) {
+    jmethodID prev_method = NULL;
     for (int i = 0; i < number; i++) {
         if (frames[i].bci == -4) { // a native frame
             frames[i].bci = BCI_NATIVE_FRAME;
-            frames[i].method_id = (jmethodID)findNativeMethod(frames[i].machinepc);
+             const char* current_method_name = findNativeMethod(frames[i].machinepc);
+            jmethodID current_method = (jmethodID)current_method_name;
+            if (current_method == prev_method && _cstack == CSTACK_LBR) {
+                // Skip duplicates in LBR stack, where branch_stack[N].from == branch_stack[N+1].to
+                prev_method = NULL;
+            } else {
+                frames[i].bci = BCI_NATIVE_FRAME;
+                frames[i].method_id = prev_method = current_method;
+            }
         }
     }
 }
@@ -372,6 +381,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
             atomicInc(_failures[-ticks_unknown_Java]);
             frames->bci = BCI_ERROR;
             frames->method_id = (jmethodID)asgctError(ticks_unknown_Java);
+            frames->type = encode_type(0, 0);
             return 1;
         }
     }
@@ -633,7 +643,7 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
         java_frames = getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
         num_frames += java_frames;
 
-        if  (first_java_pc >= _interp_start && first_java_pc < _interp_end) {
+        /*if  (first_java_pc >= _interp_start && first_java_pc < _interp_end) {
             if (frames[first_java_frame].bci >= BCI_SMALLEST_USED_BY_VM) {
                 frames[first_java_frame].bci &= ~BCI_TYPE_MASK;
                 frames[first_java_frame].bci |= FRAME_INTERPRETED << 24;
@@ -666,7 +676,7 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
                     }
                 }
             }
-        }
+        }*/
     } else if (event_type >= BCI_ALLOC_OUTSIDE_TLAB && VMStructs::_get_stack_trace != NULL) {
         // Events like object allocation happen at known places where it is safe to call JVM TI,
         // but not directly, since the thread is in_vm rather than in_native

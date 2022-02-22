@@ -256,14 +256,19 @@ CodeCache* Profiler::findNativeLibrary(const void* address) {
     for (int i = 0; i < native_lib_count; i++) {
         if (_native_libs[i]->contains(address)) {
             return _native_libs[i];
-        }
+        } 
     }
     return NULL;
 }
 
 const char* Profiler::findNativeMethod(const void* address) {
     CodeCache* lib = findNativeLibrary(address);
-    return lib == NULL ? NULL : lib->binarySearch(address);
+    if (lib == NULL) { // try without the top byte
+        const void* address2 = (const void*)((uint64_t) address & 0x0000000fffffffff);
+        lib = findNativeLibrary(address2);
+        return lib == NULL ? NULL : lib->binarySearch(address2);
+    }
+    return lib->binarySearch(address);
 }
 
 // Make sure the top frame is Java, otherwise AsyncGetCallTrace
@@ -319,7 +324,7 @@ void Profiler::fillNativeTraceMethods(int number, ASGCT_CallFrame* frames) {
     for (int i = 0; i < number; i++) {
         if (frames[i].bci == -4) { // a native frame
             frames[i].bci = BCI_NATIVE_FRAME;
-             const char* current_method_name = findNativeMethod(frames[i].machinepc);
+            const char* current_method_name = findNativeMethod(frames[i].machinepc);
             jmethodID current_method = (jmethodID)current_method_name;
             if (current_method == prev_method && _cstack == CSTACK_LBR) {
                 // Skip duplicates in LBR stack, where branch_stack[N].from == branch_stack[N+1].to
@@ -372,18 +377,6 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
     if (jni == NULL) {
         // Not a Java thread
         return 0;
-    }
-
-    if (_safe_mode & JAVA_STATE) {
-        int state = vm_thread->state();
-        if ((state == 8 || state == 9) && !inJavaCode(ucontext)) {
-            // Thread is in Java state, but does not have a valid Java frame on top of the stack
-            atomicInc(_failures[-ticks_unknown_Java]);
-            frames->bci = BCI_ERROR;
-            frames->method_id = (jmethodID)asgctError(ticks_unknown_Java);
-            frames->type = encode_type(0, 0);
-            return 1;
-        }
     }
 
     JitWriteProtection jit(false);
@@ -633,67 +626,26 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
     if (!_jfr.active() && event_type <= BCI_ALLOC && event_type >= BCI_PARK && event->id()) {
         num_frames = makeEventFrame(frames, event_type, event->id());
     }
-
-    num_frames += getNativeTrace(ucontext, frames + num_frames, event_type, tid, &first_java_pc);
+    
+    //num_frames += getNativeTrace(ucontext, frames + num_frames, event_type, tid, &first_java_pc);
 
     int java_frames;
     int first_java_frame = num_frames;
-    if (event_type == 0) {
-        // Async events
-        java_frames = getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
-        num_frames += java_frames;
 
-        /*if  (first_java_pc >= _interp_start && first_java_pc < _interp_end) {
-            if (frames[first_java_frame].bci >= BCI_SMALLEST_USED_BY_VM) {
-                frames[first_java_frame].bci &= ~BCI_TYPE_MASK;
-                frames[first_java_frame].bci |= FRAME_INTERPRETED << 24;
-            }
-        } else {
-            NMethod* nmethod = NULL;
-            jmethodID blobID = 0;
-            if (first_java_pc != NULL) {
-                nmethod = CodeHeap::findNMethod(first_java_pc);
-            }
-            if (nmethod != NULL && nmethod->isNMethod()) {
-                blobID = nmethod->method()->constMethod()->id();
-            }
-            if (blobID != NULL) {
-                // search for the first java frame that matches the physical pc (i.e. that is not inlined)
-                // however, don't go beyond any error/special frame
-                int i;
-                for (i = 0;  i < java_frames &&
-                             blobID != frames[first_java_frame + i].method_id &&
-                             frames[first_java_frame + i].bci >= BCI_SMALLEST_USED_BY_VM; i++) ;
-                // if found, mark the compiled frame and potential inlined frames on top of it
-                if (i < java_frames && blobID == frames[first_java_frame + i].method_id ) {
-                    if (frames[first_java_frame + i].bci > BCI_SMALLEST_USED_BY_VM) {
-                        frames[first_java_frame + i].bci &= ~BCI_TYPE_MASK;
-                        frames[first_java_frame + i].bci |= FRAME_JIT_COMPILED << 24;
-                    }
-                    for (int j = 0;  j < i; j++) {
-                        frames[first_java_frame + j].bci &= ~BCI_TYPE_MASK;
-                        frames[first_java_frame + j].bci |= FRAME_INLINED << 24;
-                    }
-                }
-            }
-        }*/
-    } else if (event_type >= BCI_ALLOC_OUTSIDE_TLAB && VMStructs::_get_stack_trace != NULL) {
-        // Events like object allocation happen at known places where it is safe to call JVM TI,
-        // but not directly, since the thread is in_vm rather than in_native
-        num_frames += getJavaTraceInternal(jvmti_frames + num_frames, frames + num_frames, _max_stack_depth);
-    } else {//if (evqent_type >= BCI_ALLOC_OUTSIDE_TLAB && !VM::isOpenJ9()) {
-        num_frames += getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
-    /*} else {
-        // Lock events and instrumentation events can safely call synchronous JVM TI stack walker.
-        // Skip Instrument.recordSample() method
-        int start_depth = event_type == BCI_INSTRUMENT ? 1 : 0;
-        num_frames += getJavaTraceJvmti(jvmti_frames + num_frames, frames + num_frames, start_depth, _max_stack_depth);
-    */}
+    // Async events
+    java_frames = getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
+    num_frames += java_frames;
 
     if (num_frames == 0) {
         num_frames += makeEventFrame(frames + num_frames, BCI_ERROR, (uintptr_t)"no_Java_frame");
+        //printf("------ error\n");
+    } else {
+        if (java_frames == 0) {
+          //  printf("----- native helped us\n");
+        } else {
+          //  printf("------ success\n");
+        }
     }
-
     if (_add_thread_frame) {
         num_frames += makeEventFrame(frames + num_frames, BCI_THREAD_ID, tid);
     }

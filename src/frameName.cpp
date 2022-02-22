@@ -232,6 +232,9 @@ char* FrameName::javaClassName(const char* symbol, int length, int style) {
 }
 
 const char* FrameName::name(ASGCT_CallFrame& frame, bool for_matching) {
+    if (frame.is_non_java() && frame.get_comp_level() == -1) {
+        return "[stub]";
+    }
     if (frame.method_id == NULL) {
         return "[unknown]";
     }

@@ -584,7 +584,6 @@ int FlameGraph::frameType(std::string& name, u64 total, u64 interp, u64 inlined,
         // Java method
         name = name.substr(0, name.length() - 4);
         if (max == inlined) {
-            printf("inlined\n");
             return FRAME_INLINED;
         } else if (max == interp) {
             return FRAME_INTERPRETED;

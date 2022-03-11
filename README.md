@@ -1,3 +1,16 @@
+# Fork
+
+Fork of the async-profiler to experiment with a new version of the AsyncGetCallTrace call in a modified [JDK](https://github.com/parttimenerd/jdk/tree/parttimenerd_asgct2). It only changes the used API call and can display more information.
+
+This is still an early draft and especially the data structures of AsyncGetCallTrace2 (and its name) are not finalized and represent more
+a proof of concept. The data structures should later be more efficient,
+but there current implementation made creating a working async-profiler
+far easier (and required less changes to its structure).
+
+[The diff is relatively small.](https://github.com/SAP/async-profiler/compare/distinguish_inlined_frames2...SAP:parttimenerd_asgct2?expand=1)
+
+For more information and a demo, please refer to [asgct2-demo](https://github.com/parttimenerd/asgct2-demo).
+
 # async-profiler
 
 This project is a low overhead sampling profiler for Java

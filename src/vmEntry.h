@@ -28,7 +28,7 @@
 
 
 enum FrameTypeId {
-    FRAME_INTERPRETED  = 7,
+    FRAME_INTERPRETED  = 0,
     FRAME_JIT_COMPILED = 1,
     FRAME_INLINED      = 2,
     FRAME_NATIVE       = 3,
@@ -104,9 +104,9 @@ enum StoredFrameType {
         return type & 0xff;
     }
 
-    bool is_non_java() { return get_frame_type() == FRAME_NATIVE || 
+    bool is_non_java() { return get_frame_type() == FRAME_NATIVE ||
         get_frame_type() == FRAME_KERNEL || get_frame_type() == FRAME_CPP; }
-  
+
 };
 
 int16_t encode_type(int frame_type, int comp_level) {

@@ -55,6 +55,8 @@ class Trie {
         switch(type) {
             case FRAME_TYPE_INTERPRETED_JAVA: _interp += value; return;
             case FRAME_TYPE_INLINED_JAVA: _inlined += value; return;
+            case FRAME_TYPE_C1:
+            case FRAME_TYPE_C2:
             case FRAME_TYPE_COMPILED_JAVA: _compiled += value; return;
         }
     }

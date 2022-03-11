@@ -256,7 +256,7 @@ CodeCache* Profiler::findNativeLibrary(const void* address) {
     for (int i = 0; i < native_lib_count; i++) {
         if (_native_libs[i]->contains(address)) {
             return _native_libs[i];
-        } 
+        }
     }
     return NULL;
 }
@@ -303,7 +303,7 @@ int Profiler::getNativeTrace(void* ucontext, ASGCT_CallFrame* frames, int event_
     if (_cstack == CSTACK_NO || (event_type != 0 && _cstack == CSTACK_DEFAULT)) {
         return 0;
     }
-  
+
     // Use PerfEvents stack walker for execution samples, or basic stack walker for other events
     if (event_type == 0 && _engine == &perf_events) {
         native_frames = PerfEvents::walk(tid, callchain, MAX_NATIVE_FRAMES, first_java_pc);
@@ -561,7 +561,7 @@ inline int Profiler::convertFrames(jvmtiFrameInfo* jvmti_frames, ASGCT_CallFrame
         frames[i].type = encode_type(FRAME_INTERPRETED, 0);
     }
     return num_frames;
-} 
+}
 
 inline int Profiler::makeEventFrame(ASGCT_CallFrame* frames, jint event_type, uintptr_t id) {
     frames[0].bci = event_type;
@@ -626,8 +626,6 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
     if (!_jfr.active() && event_type <= BCI_ALLOC && event_type >= BCI_PARK && event->id()) {
         num_frames = makeEventFrame(frames, event_type, event->id());
     }
-    
-    //num_frames += getNativeTrace(ucontext, frames + num_frames, event_type, tid, &first_java_pc);
 
     int java_frames;
     int first_java_frame = num_frames;
@@ -635,16 +633,12 @@ void Profiler::recordSample(void* ucontext, u64 counter, jint event_type, Event*
     // Async events
     java_frames = getJavaTraceAsync(ucontext, frames + num_frames, _max_stack_depth);
     num_frames += java_frames;
-
+    if (num_frames == 0) {
+        // AsyncGetCallTrace2 currently does not support traversing native stacks
+        num_frames += getNativeTrace(ucontext, frames + num_frames, event_type, tid, &first_java_pc);
+    }
     if (num_frames == 0) {
         num_frames += makeEventFrame(frames + num_frames, BCI_ERROR, (uintptr_t)"no_Java_frame");
-        //printf("------ error\n");
-    } else {
-        if (java_frames == 0) {
-          //  printf("----- native helped us\n");
-        } else {
-          //  printf("------ success\n");
-        }
     }
     if (_add_thread_frame) {
         num_frames += makeEventFrame(frames + num_frames, BCI_THREAD_ID, tid);
@@ -1185,7 +1179,7 @@ void Profiler::switchThreadEvents(jvmtiEventMode mode) {
 
 /*
  * Dump stacks in FlameGraph input format:
- * 
+ *
  * <frame>;<frame>;...;<topmost frame> <count>
  */
 void Profiler::dumpCollapsed(std::ostream& out, Arguments& args) {

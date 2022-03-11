@@ -31,7 +31,5 @@ fi
     fi
   }
 
-  assert_string "Target.main;Target.method1_"
-  assert_string "Target.main;Target.method2_"
-  assert_string "Target.main;Target.method3;java/io/File"
+  assert_string "thread_start;_pthread_start"
 )

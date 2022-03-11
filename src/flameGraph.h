@@ -32,19 +32,19 @@ class Trie {
     u64 _self;
     u64 _interp;
     u64 _inlined;
-    u64 _compiled;
+    u64 _c1_compiled;
+    u64 _c2_compiled;
 
-    Trie() : _children(), _total(0), _self(0), _interp(0), _inlined(0), _compiled(0) {
+    Trie() : _children(), _total(0), _self(0), _interp(0), _inlined(0), _c1_compiled(0), _c2_compiled(0) {
     }
-    
+
     Trie* addChild(const std::string& key, u64 value, char type) {
         _total += value;
         switch(type) {
         case FRAME_TYPE_INTERPRETED_JAVA: _interp += value; break;
         case FRAME_TYPE_INLINED_JAVA: _inlined += value; break;
-        case FRAME_TYPE_C1:
-        case FRAME_TYPE_C2:
-        case FRAME_TYPE_COMPILED_JAVA: _compiled += value; break;
+        case FRAME_TYPE_C1: _c1_compiled += value; break;
+        case FRAME_TYPE_C2: _c2_compiled += value; break;
         }
         return &_children[key];
     }
@@ -55,9 +55,8 @@ class Trie {
         switch(type) {
             case FRAME_TYPE_INTERPRETED_JAVA: _interp += value; return;
             case FRAME_TYPE_INLINED_JAVA: _inlined += value; return;
-            case FRAME_TYPE_C1:
-            case FRAME_TYPE_C2:
-            case FRAME_TYPE_COMPILED_JAVA: _compiled += value; return;
+            case FRAME_TYPE_C1: _c1_compiled += value; return;
+            case FRAME_TYPE_C2: _c2_compiled += value; return;
         }
     }
 

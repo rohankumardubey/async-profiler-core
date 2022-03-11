@@ -90,9 +90,9 @@ static const char FLAMEGRAPH_HEADER[] =
     "\t\treturn '#' + (p[0] + ((p[1] * v) << 16 | (p[2] * v) << 8 | (p[3] * v))).toString(16);\n"
     "\t}\n"
     "\n"
-    "\tfunction f(level, left, width, type, title, interp, inl, comp) {\n"
+    "\tfunction f(level, left, width, type, title, interp, inl, c1_comp, c2_comp) {\n"
     "\t\tlevels[level].push({left: left, width: width, color: getColor(palette[type]), title: title,\n"
-    "\t\t\t\tinterpreted: interp, inlined: inl, compiled: comp, type: type});\n"
+    "\t\t\t\tinterpreted: interp, inlined: inl, c1_compiled: c1_comp, c2_compiled: c2_comp, type: type});\n"
     "\t}\n"
     "\n"
     "\tfunction samples(n) {\n"
@@ -211,11 +211,11 @@ static const char FLAMEGRAPH_HEADER[] =
     "\t\t\t\t\tif (window.onOpenJ9) {\n"
     "\t\t\t\t\t\tcanvas.title = f.title + '\\n(' + samples(f.width) + ', ' + pct(f.width, levels[0][0].width) +\n"
     "\t\t\t\t\t\t\t\t'\%%,\\nInterpreted: ' + f.interpreted + ',\\nInlined: ' +\n"
-    "\t\t\t\t\t\t\t\tf.inlined + ',\\nCompiled: ' + f.compiled + ')';\n"
+    "\t\t\t\t\t\t\t\tf.inlined + ',\\nC1 Compiled: ' + f.c1_compiled + '\\nC2 Compiled: ' + f.c2_compiled + ')';\n"
     "\t\t\t\t\t} else {\n"
     "\t\t\t\t\t\tcanvas.title = f.title + '\\n(' + samples(f.width) + ', ' + pct(f.width, levels[0][0].width) +\n"
     "\t\t\t\t\t\t\t\t'\%%,\\nInterpreted: ' + f.interpreted + ',\\nInlined: ' +\n"
-    "\t\t\t\t\t\t\t\tf.inlined + ',\\nCompiled: ' + f.compiled + ')';\n"
+    "\t\t\t\t\t\t\t\tf.inlined + ',\\nC1 Compiled: ' + f.c1_compiled + '\\nC2 Compiled: ' + f.c2_compiled + ')';\n"
     "\t\t\t\t\t}\n"
     "\t\t\t\t} else {\n"
     "\t\t\t\t\tcanvas.title = f.title + '\\n(' + samples(f.width) + ', ' + pct(f.width, levels[0][0].width) + '\%%)';\n"
@@ -416,7 +416,7 @@ static const char TREE_HEADER[] =
     "<button type='button' id='searchBtn' onclick='search()'>search</button></div>\n"
     "<ul class=\"tree\">\n";
 
-static const char TREE_FOOTER[] = 
+static const char TREE_FOOTER[] =
     "<script>\n"
     "addClickActions();\n"
     "</script>\n"
@@ -429,7 +429,7 @@ class StringUtils {
   public:
     static bool endsWith(const std::string& s, const char* suffix, size_t suffixlen) {
         size_t len = s.length();
-        return len >= suffixlen && s.compare(len - suffixlen, suffixlen, suffix) == 0; 
+        return len >= suffixlen && s.compare(len - suffixlen, suffixlen, suffix) == 0;
     }
 
     static void replace(std::string& s, char c, const char* replacement, size_t rlen) {
@@ -516,11 +516,11 @@ void FlameGraph::dump(std::ostream& out, bool tree, bool onOpenJ9) {
 
 void FlameGraph::printFrame(std::ostream& out, const std::string& name, const Trie& f, int level, u64 x) {
     std::string name_copy = name;
-    int type = frameType(name_copy, f._total, f._interp, f._inlined, f._compiled);
+    int type = frameType(name_copy, f._total, f._interp, f._inlined, f._c1_compiled + f._c2_compiled);
     StringUtils::replace(name_copy, '\'', "\\'", 2);
 
-    snprintf(_buf, sizeof(_buf) - 1, "f(%d,%llu,%llu,%d,'%s',%llu,%llu,%llu)\n",
-             level, x, f._total, type, name_copy.c_str(), f._interp, f._inlined, f._compiled);
+    snprintf(_buf, sizeof(_buf) - 1, "f(%d,%llu,%llu,%d,'%s',%llu,%llu,%llu,%llu)\n",
+             level, x, f._total, type, name_copy.c_str(), f._interp, f._inlined, f._c1_compiled, f._c2_compiled);
     out << _buf;
 
     x += f._self;
@@ -544,7 +544,7 @@ void FlameGraph::printTreeFrame(std::ostream& out, const Trie& f, int level) {
         std::string name = subnodes[i]._name;
         const Trie* trie = subnodes[i]._trie;
 
-        int type = frameType(name, trie->_total, trie->_interp, trie->_inlined, trie->_compiled);
+        int type = frameType(name, trie->_total, trie->_interp, trie->_inlined, trie->_c1_compiled + trie->_c2_compiled);
         StringUtils::replace(name, '&', "&amp;", 5);
         StringUtils::replace(name, '<', "&lt;", 4);
         StringUtils::replace(name, '>', "&gt;", 4);
@@ -580,29 +580,24 @@ void FlameGraph::printTreeFrame(std::ostream& out, const Trie& f, int level) {
 // TODO: Reuse frame type embedded in ASGCT_CallFrame
 int FlameGraph::frameType(std::string& name, u64 total, u64 interp, u64 inlined, u64 compiled) {
     u64 max = std::max(interp, std::max(inlined, compiled));
-    if ((StringUtils::endsWith(name, "_[j]", 4) && (max != inlined && max != 0)) || (max == compiled && max != 0)) {
+    if (max != 0) {
+        // Java method
         name = name.substr(0, name.length() - 4);
+        if (max == inlined) {
+            printf("inlined\n");
+            return FRAME_INLINED;
+        } else if (max == interp) {
+            return FRAME_INTERPRETED;
+        } else {
+            return FRAME_JIT_COMPILED;
+        }
         return FRAME_JIT_COMPILED;
-    } else if (StringUtils::endsWith(name, "_[i]", 4) || (max == inlined && max != 0)) {
-        name = name.substr(0, name.length() - 4);
-        return FRAME_INLINED;
-    } else if (StringUtils::endsWith(name, "_[k]", 4)) {
+    } if (StringUtils::endsWith(name, "_[k]", 4)) {
         name = name.substr(0, name.length() - 4);
         return FRAME_KERNEL;
     } else if (name.find("::") != std::string::npos || name.compare(0, 2, "-[") == 0 || name.compare(0, 2, "+[") == 0) {
         // C++ function or Objective C method
         return FRAME_CPP;
-    } else if (((int)name.find('/') > 0 && name[0] != '[')
-            || ((int)name.find('.') > 0 && name[0] >= 'A' && name[0] <= 'Z')) {
-        // Java regular method
-        if ( .5f < float(inlined) / float(total)) {
-            // Majority of frames inlined
-            return FRAME_INLINED;
-        } else if ( .5f < float(interp) / float(total)) {
-            // Majority of frames interpreted
-            return FRAME_INTERPRETED;
-        }
-        return FRAME_JIT_COMPILED;
     } else {
         // Other native code
         return FRAME_NATIVE;

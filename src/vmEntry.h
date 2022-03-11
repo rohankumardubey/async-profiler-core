@@ -79,7 +79,6 @@ enum StoredFrameType {
     FRAME_TYPE_ERROR            = 'e',
     FRAME_TYPE_INSTRUMENT       = 's',
     FRAME_TYPE_INTERNALERR      = 'X',
-    FRAME_TYPE_COMPILED_JAVA    = 'J',
     FRAME_TYPE_INTERPRETED_JAVA = 'I',
     FRAME_TYPE_INLINED_JAVA     = 'i',
     FRAME_TYPE_UNKNOWN_JAVA     = 'j',

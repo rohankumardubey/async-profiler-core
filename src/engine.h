@@ -18,6 +18,48 @@
 #define _ENGINE_H
 
 #include "arguments.h"
+#include "random"
+#include <random>
+
+// create per thread
+class SubIntervalHandler {
+
+    static long _interval;
+    static long _interval_steps;
+    static thread_local long _n;
+    static thread_local long _count;
+
+    static long random_number() {
+        static thread_local std::minstd_rand rand{std::random_device()()};
+        std::uniform_int_distribution<long> dist(0, _interval_steps - 1);
+        return dist(rand);
+    }
+
+public:
+    static long setup(long interval, long interval_steps) {
+        _interval = interval;
+        _interval_steps = interval_steps ? interval_steps : DEFAULT_INTERVAL_STEPS;
+        _n = random_number();
+        _count = 0;
+        return actual_interval();
+    }
+
+    static long actual_interval() { return _interval / _interval_steps; }
+
+    static bool tick() {
+        if (_count == _interval_steps) {
+            _n = random_number();
+            _count = 0;
+        }
+        if (_count == _n) {
+            _count++;
+            return true;
+        }
+        _count++;
+        return false;
+    }
+
+};
 
 
 class Engine {

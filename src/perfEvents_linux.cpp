@@ -671,9 +671,11 @@ void PerfEvents::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
     }
 
     if (_enabled) {
-        u64 counter = readCounter(siginfo, ucontext);
-        ExecutionEvent event;
-        Profiler::instance()->recordSample(ucontext, counter, 0, &event);
+        if (SubIntervalHandler::tick()) {
+            u64 counter = readCounter(siginfo, ucontext);
+            ExecutionEvent event;
+            Profiler::instance()->recordSample(ucontext, counter, 0, &event);
+        }
     } else {
         resetBuffer(OS::threadId());
     }
@@ -790,7 +792,8 @@ Error PerfEvents::start(Arguments& args) {
     if (args._interval < 0) {
         return Error("interval must be positive");
     }
-    _interval = args._interval ? args._interval : _event_type->default_interval;
+    _interval = SubIntervalHandler::setup(args._interval ? args._interval : _event_type->default_interval,
+                                          args._interval_steps);
 
     _ring = args._ring;
     if (_ring != RING_USER && !Symbols::haveKernelSymbols()) {

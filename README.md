@@ -14,7 +14,32 @@ async-profiler can trace the following kinds of events:
 
 See our [Wiki](https://github.com/jvm-profiling-tools/async-profiler/wiki) or
 [3 hours playlist](https://www.youtube.com/playlist?list=PLNCLTEx3B8h4Yo_WvKWdLvI9mj1XpTKBr)
-to learn about all features. 
+to learn about all features.
+
+## Random Sampling
+According to the paper ["Evaluating the Accuracy of Java Profilers" by Mytkowicz et al](https://plv.colorado.edu/papers/mytkowicz-pldi10.pdf)
+profilers with a sampling interval `t` should pick samples at `t + r` (`0 <= r < t` random):
+
+> One might think that sampling every t seconds is enough (i.e.,
+> drop the r component) but it is not: specifically, if a profiler samples
+> every t seconds, the sampling rate would be synchronized with
+> any program or system activity that occurs at regular time intervals.
+> For example, if the thread scheduler switches between
+> threads every 10ms and our sampling interval was also 10ms, then
+> we may always take samples immediately after a thread switch.
+> Because performance is often different immediately after a thread
+> switch than at other points (e.g., due to cache and TLB warm-up effects)
+> we would get biased data. The random component, r, guards
+> against such situations.
+
+Sadly this never made it into any of open source profiler that I could find.
+Therefore the modified version of this async-profiler includes such sampling.
+
+The basic idea is to split every interval t into N subintervals.
+Now at the start of each interval, pick a random number n with `0 <= n < N`
+and register the recording handlers to call a handler with interval `t / N`.
+And use a counter inside this handler to check the current subinterval id,
+if it matches n, then record a sample.
 
 ## Download
 
@@ -24,7 +49,7 @@ Current release (2.7):
  - Linux x64 (musl): [async-profiler-2.7-linux-musl-x64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-linux-musl-x64.tar.gz)
  - Linux arm64: [async-profiler-2.7-linux-arm64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-linux-arm64.tar.gz)
  - macOS x64/arm64: [async-profiler-2.7-macos.zip](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-macos.zip)
- - Converters between profile formats: [converter.jar](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/converter.jar)  
+ - Converters between profile formats: [converter.jar](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/converter.jar)
    (JFR to Flame Graph, JFR to FlameScope, collapsed stacks to Flame Graph)
 
 [Previous releases](https://github.com/jvm-profiling-tools/async-profiler/releases)
@@ -327,7 +352,7 @@ The following is a complete list of the command-line options accepted by
 
 * `-d N` - the profiling duration, in seconds. If no `start`, `resume`, `stop`
   or `status` option is given, the profiler will run for the specified period
-  of time and then automatically stop.  
+  of time and then automatically stop.
   Example: `./profiler.sh -d 30 8983`
 
 * `-e event` - the profiling event: `cpu`, `alloc`, `lock`, `cache-misses` etc.
@@ -353,7 +378,7 @@ The following is a complete list of the command-line options accepted by
 * `-i N` - sets the profiling interval in nanoseconds or in other units,
   if N is followed by `ms` (for milliseconds), `us` (for microseconds),
   or `s` (for seconds). Only CPU active time is counted. No samples
-  are collected while CPU is idle. The default is 10000000 (10ms).  
+  are collected while CPU is idle. The default is 10000000 (10ms).
   Example: `./profiler.sh -i 500us 8983`
 
 * `--alloc N` - allocation profiling interval in bytes or in other units,
@@ -364,11 +389,11 @@ The following is a complete list of the command-line options accepted by
   longer than the specified duration.
 
 * `-j N` - sets the Java stack profiling depth. This option will be ignored if N is greater
-  than default 2048.  
+  than default 2048.
   Example: `./profiler.sh -j 30 8983`
 
 * `-t` - profile threads separately. Each stack trace will end with a frame
-  that denotes a single thread.  
+  that denotes a single thread.
   Example: `./profiler.sh -t 8983`
 
 * `-s` - print simple class names instead of FQN.
@@ -382,7 +407,7 @@ The following is a complete list of the command-line options accepted by
 * `-o fmt` - specifies what information to dump when profiling ends.
   `fmt` can be one of the following options:
     - `traces[=N]` - dump call traces (at most N samples);
-    - `flat[=N]` - dump flat profile (top N hot methods);  
+    - `flat[=N]` - dump flat profile (top N hot methods);
       can be combined with `traces`, e.g. `traces=200,flat=200`
     - `jfr` - dump events in Java Flight Recorder format readable by Java Mission Control.
       This *does not* require JDK commercial features to be enabled.
@@ -391,7 +416,7 @@ The following is a complete list of the command-line options accepted by
       a collection of call stacks, where each line is a semicolon separated list
       of frames followed by a counter.
     - `flamegraph` - produce Flame Graph in HTML format.
-    - `tree` - produce Call Tree in HTML format.  
+    - `tree` - produce Call Tree in HTML format.
       `--reverse` option will generate backtrace view.
 
 * `--total` - count the total value of the collected metric instead of the number of samples,
@@ -404,27 +429,27 @@ The following is a complete list of the command-line options accepted by
   `-I` defines the name pattern that *must* be present in the stack traces,
   while `-X` is the pattern that *must not* occur in any of stack traces in the output.
   `-I` and `-X` options can be specified multiple times. A pattern may begin or end with
-  a star `*` that denotes any (possibly empty) sequence of characters.  
+  a star `*` that denotes any (possibly empty) sequence of characters.
   Example: `./profiler.sh -I 'Primes.*' -I 'java/*' -X '*Unsafe.park*' 8983`
 
-* `--title TITLE`, `--minwidth PERCENT`, `--reverse` - FlameGraph parameters.  
+* `--title TITLE`, `--minwidth PERCENT`, `--reverse` - FlameGraph parameters.
   Example: `./profiler.sh -f profile.html --title "Sample CPU profile" --minwidth 0.5 8983`
 
-* `-f FILENAME` - the file name to dump the profile information to.  
-  `%p` in the file name is expanded to the PID of the target JVM;  
-  `%t` - to the timestamp;  
-  `%{ENV}` - to the value of the given environment variable.  
+* `-f FILENAME` - the file name to dump the profile information to.
+  `%p` in the file name is expanded to the PID of the target JVM;
+  `%t` - to the timestamp;
+  `%{ENV}` - to the value of the given environment variable.
   Example: `./profiler.sh -o collapsed -f /tmp/traces-%t.txt 8983`
 
 * `--loop TIME` - run profiler in a loop (continuous profiling).
   The argument is either a clock time (`hh:mm:ss`) or
   a loop duration in `s`econds, `m`inutes, `h`ours, or `d`ays.
   Make sure the filename includes a timestamp pattern, or the output
-  will be overwritten on each iteration.  
+  will be overwritten on each iteration.
   Example: `./profiler.sh --loop 1h -f /var/log/profile-%t.jfr 8983`
 
 * `--all-user` - include only user-mode events. This option is helpful when kernel profiling
-  is restricted by `perf_event_paranoid` settings.  
+  is restricted by `perf_event_paranoid` settings.
 
 * `--sched` - group threads by Linux-specific scheduling policy: BATCH/IDLE/OTHER.
 
@@ -439,8 +464,8 @@ The following is a complete list of the command-line options accepted by
 * `--begin function`, `--end function` - automatically start/stop profiling
   when the specified native function is executed.
 
-* `--ttsp` - time-to-safepoint profiling. An alias for  
-  `--begin SafepointSynchronize::begin --end RuntimeService::record_safepoint_synchronized`  
+* `--ttsp` - time-to-safepoint profiling. An alias for
+  `--begin SafepointSynchronize::begin --end RuntimeService::record_safepoint_synchronized`
   It is not a separate event type, but rather a constraint. Whatever event type
   you choose (e.g. `cpu` or `wall`), the profiler will work as usual, except that
   only events between the safepoint request and the start of the VM operation
@@ -545,18 +570,18 @@ The profiler cannot establish communication with the target JVM through UNIX dom
 Usually this happens in one of the following cases:
 1. Attach socket `/tmp/.java_pidNNN` has been deleted. It is a common
    practice to clean `/tmp` automatically with some scheduled script.
-   Configure the cleanup software to exclude `.java_pid*` files from deletion.  
-   How to check: run `lsof -p PID | grep java_pid`  
+   Configure the cleanup software to exclude `.java_pid*` files from deletion.
+   How to check: run `lsof -p PID | grep java_pid`
    If it lists a socket file, but the file does not exist, then this is exactly
    the described problem.
 2. JVM is started with `-XX:+DisableAttachMechanism` option.
 3. `/tmp` directory of Java process is not physically the same directory
    as `/tmp` of your shell, because Java is running in a container or in
    `chroot` environment. `jattach` attempts to solve this automatically,
-   but it might lack the required permissions to do so.  
+   but it might lack the required permissions to do so.
    Check `strace build/jattach PID properties`
 4. JVM is busy and cannot reach a safepoint. For instance,
-   JVM is in the middle of long-running garbage collection.  
+   JVM is in the middle of long-running garbage collection.
    How to check: run `kill -3 PID`. Healthy JVM process should print
    a thread dump and heap info in its console.
 

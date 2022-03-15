@@ -28,13 +28,14 @@ CStack ITimer::_cstack;
 
 void ITimer::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
     if (!_enabled) return;
-
+    if (!SubIntervalHandler::tick()) return;
     ExecutionEvent event;
     Profiler::instance()->recordSample(ucontext, _interval, 0, &event);
 }
 
 void ITimer::signalHandlerJ9(int signo, siginfo_t* siginfo, void* ucontext) {
     if (!_enabled) return;
+    if (!SubIntervalHandler::tick()) return;
 
     J9StackTraceNotification notif;
     const void* last_pc;
@@ -62,7 +63,8 @@ Error ITimer::start(Arguments& args) {
     if (args._interval < 0) {
         return Error("interval must be positive");
     }
-    _interval = args._interval ? args._interval : DEFAULT_INTERVAL;
+    _interval = SubIntervalHandler::setup(args._interval ? args._interval : DEFAULT_INTERVAL,
+                                          args._interval_steps);
     _cstack = args._cstack;
 
     if (VM::isOpenJ9()) {
@@ -79,7 +81,7 @@ Error ITimer::start(Arguments& args) {
     time_t sec = _interval / 1000000000;
     suseconds_t usec = (_interval % 1000000000) / 1000;
     struct itimerval tv = {{sec, usec}, {sec, usec}};
-    
+
     if (setitimer(ITIMER_PROF, &tv, NULL) != 0) {
         return Error("ITIMER_PROF is not supported on this system");
     }

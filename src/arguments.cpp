@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <cstdlib>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,7 +69,7 @@ static const Multiplier UNIVERSAL[] = {{'n', 1}, {'u', 1000}, {'m', 1000000}, {'
 //     flamegraph       - produce Flame Graph in HTML format
 //     tree             - produce call tree in HTML format
 //     jfr              - dump events in Java Flight Recorder format
-//     jfrsync[=CONFIG] - start Java Flight Recording with the given config along with the profiler 
+//     jfrsync[=CONFIG] - start Java Flight Recording with the given config along with the profiler
 //     traces[=N]       - dump top N call traces
 //     flat[=N]         - dump top N methods (aka flat profile)
 //     samples          - count the number of samples (default)
@@ -78,6 +79,7 @@ static const Multiplier UNIVERSAL[] = {{'n', 1}, {'u', 1000}, {'m', 1000000}, {'
 //     timeout=TIME     - automatically stop profiler at TIME (absolute or relative)
 //     loop=TIME        - run profiler in a loop (continuous profiling)
 //     interval=N       - sampling interval in ns (default: 10'000'000, i.e. 10 ms)
+//     interval_steps=N - number of subintervals in an interval, only samples in one of these randomly selected intervals (default: 50)
 //     jstackdepth=N    - maximum Java stack depth (default: 2048)
 //     safemode=BITS    - disable stack recovery techniques (default: 0, i.e. everything enabled)
 //     file=FILENAME    - output file name for dumping
@@ -119,7 +121,7 @@ Error Arguments::parse(const char* args) {
     }
     char* args_copy = strcpy(_buf + EXTRA_BUF_SIZE, args);
 
-    const char* msg = NULL;    
+    const char* msg = NULL;
 
     for (char* arg = strtok(args_copy, ","); arg != NULL; arg = strtok(NULL, ",")) {
         char* value = strchr(arg, '=');
@@ -236,6 +238,11 @@ Error Arguments::parse(const char* args) {
             CASE("interval")
                 if (value == NULL || (_interval = parseUnits(value, UNIVERSAL)) <= 0) {
                     msg = "Invalid interval";
+                }
+
+            CASE("interval_steps")
+                if (value == NULL || (_interval_steps = atol(value)) <= 0) {
+                    msg = "Invalid interval steps";
                 }
 
             CASE("jstackdepth")

@@ -58,9 +58,11 @@ ThreadState WallClock::getThreadState(void* ucontext) {
 }
 
 void WallClock::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
-    ExecutionEvent event;
-    event._thread_state = _sample_idle_threads ? getThreadState(ucontext) : THREAD_RUNNING;
-    Profiler::instance()->recordSample(ucontext, _interval, 0, &event);
+    if (SubIntervalHandler::tick()) {
+        ExecutionEvent event;
+        event._thread_state = _sample_idle_threads ? getThreadState(ucontext) : THREAD_RUNNING;
+        Profiler::instance()->recordSample(ucontext, _interval, 0, &event);
+    }
 }
 
 long WallClock::adjustInterval(long interval, int thread_count) {
@@ -78,7 +80,8 @@ Error WallClock::start(Arguments& args) {
     _sample_idle_threads = strcmp(args._event, EVENT_WALL) == 0;
 
     // Increase default interval for wall clock mode due to larger number of sampled threads
-    _interval = args._interval ? args._interval : (_sample_idle_threads ? DEFAULT_INTERVAL * 5 : DEFAULT_INTERVAL);
+    _interval = SubIntervalHandler::setup(args._interval ? args._interval : (_sample_idle_threads ? DEFAULT_INTERVAL * 5 : DEFAULT_INTERVAL),
+                                          args._interval_steps);
 
     OS::installSignalHandler(SIGVTALRM, signalHandler);
 

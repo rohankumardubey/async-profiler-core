@@ -21,6 +21,7 @@
 
 
 const long DEFAULT_INTERVAL = 10000000;  // 10 ms
+const long DEFAULT_INTERVAL_STEPS = 50;
 const int DEFAULT_JSTACKDEPTH = 2048;
 
 const char* const EVENT_CPU    = "cpu";
@@ -136,6 +137,7 @@ class Arguments {
     const char* _event;
     int _timeout;
     long _interval;
+    long _interval_steps;
     long _alloc;
     long _lock;
     int  _jstackdepth;
@@ -178,6 +180,7 @@ class Arguments {
         _event(NULL),
         _timeout(0),
         _interval(0),
+        _interval_steps(0),
         _alloc(0),
         _lock(0),
         _jstackdepth(DEFAULT_JSTACKDEPTH),

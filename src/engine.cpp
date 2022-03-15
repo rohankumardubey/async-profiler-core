@@ -16,6 +16,10 @@
 
 #include "engine.h"
 
+long SubIntervalHandler::_interval = 0;
+long SubIntervalHandler::_interval_steps = 0;
+thread_local long SubIntervalHandler::_n = 0;
+thread_local long SubIntervalHandler::_count = 0;
 
 volatile bool Engine::_enabled = false;
 

@@ -58,11 +58,9 @@ ThreadState WallClock::getThreadState(void* ucontext) {
 }
 
 void WallClock::signalHandler(int signo, siginfo_t* siginfo, void* ucontext) {
-    if (SubIntervalHandler::tick()) {
-        ExecutionEvent event;
-        event._thread_state = _sample_idle_threads ? getThreadState(ucontext) : THREAD_RUNNING;
-        Profiler::instance()->recordSample(ucontext, _interval, 0, &event);
-    }
+    ExecutionEvent event;
+    event._thread_state = _sample_idle_threads ? getThreadState(ucontext) : THREAD_RUNNING;
+    Profiler::instance()->recordSample(ucontext, _interval, 0, &event);
 }
 
 long WallClock::adjustInterval(long interval, int thread_count) {
@@ -81,7 +79,7 @@ Error WallClock::start(Arguments& args) {
 
     // Increase default interval for wall clock mode due to larger number of sampled threads
     _interval = SubIntervalHandler::setup(args._interval ? args._interval : (_sample_idle_threads ? DEFAULT_INTERVAL * 5 : DEFAULT_INTERVAL),
-                                          args._interval_steps);
+                                          args._subintervals);
 
     OS::installSignalHandler(SIGVTALRM, signalHandler);
 
@@ -114,13 +112,16 @@ void WallClock::timerLoop() {
             OS::sleep(_interval);
             continue;
         }
+        if (!SubIntervalHandler::tick()) {
+            OS::sleep(_interval);
+            continue;
+        }
 
         if (sample_idle_threads) {
             // Try to keep the wall clock interval stable, regardless of the number of profiled threads
             int estimated_thread_count = thread_filter_enabled ? thread_filter->size() : thread_list->size();
             next_cycle_time += adjustInterval(_interval, estimated_thread_count);
         }
-
         for (int count = 0; count < THREADS_PER_TICK; ) {
             int thread_id = thread_list->next();
             if (thread_id == -1) {

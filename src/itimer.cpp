@@ -64,7 +64,7 @@ Error ITimer::start(Arguments& args) {
         return Error("interval must be positive");
     }
     _interval = SubIntervalHandler::setup(args._interval ? args._interval : DEFAULT_INTERVAL,
-                                          args._interval_steps);
+                                          args._subintervals);
     _cstack = args._cstack;
 
     if (VM::isOpenJ9()) {

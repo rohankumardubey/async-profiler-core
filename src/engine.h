@@ -25,29 +25,32 @@
 class SubIntervalHandler {
 
     static long _interval;
-    static long _interval_steps;
+    static long _subintervals;
     static thread_local long _n;
     static thread_local long _count;
 
     static long random_number() {
         static thread_local std::minstd_rand rand{std::random_device()()};
-        std::uniform_int_distribution<long> dist(0, _interval_steps - 1);
+        std::uniform_int_distribution<long> dist(0, _subintervals - 1);
         return dist(rand);
     }
 
 public:
-    static long setup(long interval, long interval_steps) {
+    static long setup(long interval, long subintervals) {
         _interval = interval;
-        _interval_steps = interval_steps ? interval_steps : DEFAULT_INTERVAL_STEPS;
+        _subintervals = subintervals ? subintervals : DEFAULT_subintervals;
         _n = random_number();
         _count = 0;
         return actual_interval();
     }
 
-    static long actual_interval() { return _interval / _interval_steps; }
+    static long actual_interval() { return _interval / _subintervals; }
 
     static bool tick() {
-        if (_count == _interval_steps) {
+        if (_subintervals == 1) {
+            return true;
+        }
+        if (_count == _subintervals) {
             _n = random_number();
             _count = 0;
         }

@@ -793,7 +793,7 @@ Error PerfEvents::start(Arguments& args) {
         return Error("interval must be positive");
     }
     _interval = SubIntervalHandler::setup(args._interval ? args._interval : _event_type->default_interval,
-                                          args._interval_steps);
+                                          args._subintervals);
 
     _ring = args._ring;
     if (_ring != RING_USER && !Symbols::haveKernelSymbols()) {

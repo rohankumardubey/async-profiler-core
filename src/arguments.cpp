@@ -79,7 +79,7 @@ static const Multiplier UNIVERSAL[] = {{'n', 1}, {'u', 1000}, {'m', 1000000}, {'
 //     timeout=TIME     - automatically stop profiler at TIME (absolute or relative)
 //     loop=TIME        - run profiler in a loop (continuous profiling)
 //     interval=N       - sampling interval in ns (default: 10'000'000, i.e. 10 ms)
-//     interval_steps=N - number of subintervals in an interval, only samples in one of these randomly selected intervals (default: 50)
+//     subintervals=N   - number of subintervals in an interval, only samples in one of these randomly selected intervals (default: 1)
 //     jstackdepth=N    - maximum Java stack depth (default: 2048)
 //     safemode=BITS    - disable stack recovery techniques (default: 0, i.e. everything enabled)
 //     file=FILENAME    - output file name for dumping
@@ -126,7 +126,6 @@ Error Arguments::parse(const char* args) {
     for (char* arg = strtok(args_copy, ","); arg != NULL; arg = strtok(NULL, ",")) {
         char* value = strchr(arg, '=');
         if (value != NULL) *value++ = 0;
-
         SWITCH (arg) {
             // Actions
             CASE("start")
@@ -235,14 +234,14 @@ Error Arguments::parse(const char* args) {
                     msg = "lock must be >= 0";
                 }
 
+            CASE("subintervals")
+                if (value == NULL || (_subintervals = atol(value)) <= 0) {
+                    msg = "Invalid interval steps";
+                }
+
             CASE("interval")
                 if (value == NULL || (_interval = parseUnits(value, UNIVERSAL)) <= 0) {
                     msg = "Invalid interval";
-                }
-
-            CASE("interval_steps")
-                if (value == NULL || (_interval_steps = atol(value)) <= 0) {
-                    msg = "Invalid interval steps";
                 }
 
             CASE("jstackdepth")

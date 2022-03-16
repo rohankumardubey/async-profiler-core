@@ -1,6 +1,6 @@
 import java.io.File;
 
-class Target {
+class MethodsTarget {
     private static volatile int value;
 
     private static void method1() {

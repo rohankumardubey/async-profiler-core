@@ -324,7 +324,7 @@ void Profiler::fillNativeTraceMethods(int number, ASGCT_CallFrame* frames) {
     for (int i = 0; i < number; i++) {
         if (frames[i].bci == -4) { // a native frame
             frames[i].bci = BCI_NATIVE_FRAME;
-            const char* current_method_name = findNativeMethod(frames[i].machinepc);
+            const char* current_method_name = findNativeMethod(frames[i].machine_pc);
             jmethodID current_method = (jmethodID)current_method_name;
             if (current_method == prev_method && _cstack == CSTACK_LBR) {
                 // Skip duplicates in LBR stack, where branch_stack[N].from == branch_stack[N+1].to
@@ -356,7 +356,7 @@ int Profiler::convertNativeTrace(int native_frames, const void** callchain, ASGC
         } else {
             frames[depth].bci = BCI_NATIVE_FRAME;
             frames[depth].method_id = prev_method = current_method;
-            frames[depth].machinepc = (void*)callchain[i];
+            frames[depth].machine_pc = (void*)callchain[i];
             frames[depth].type = encode_type(FRAME_NATIVE, 0);
             depth++;
         }

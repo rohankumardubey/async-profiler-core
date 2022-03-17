@@ -65,7 +65,7 @@ void J9WallClock::timerLoop() {
                     jvmtiFrameInfoExtended* fi = &si->frame_buffer[j];
                     frames[j].method_id = fi->method;
                     frames[j].bci = fi->location;
-                    frames[j].machinepc = (void*)fi->machinepc;
+                    frames[j].machine_pc = (void*)fi->machine_pc;
                     frames[j].type = encode_type(fi->type, 0);
                 }
                 int tid = J9Ext::GetOSThreadID(si->thread);

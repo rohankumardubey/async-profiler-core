@@ -116,6 +116,7 @@ struct ASGCT_CallTrace {
     JNIEnv* env;
     jint num_frames;
     ASGCT_CallFrame* frames;
+    void *frame_info;
 };
 
 typedef void (*AsyncGetCallTrace)(ASGCT_CallTrace*, jint, void*);
@@ -126,8 +127,6 @@ typedef struct {
 } VMManagement;
 
 enum CompLevel {
-  CompLevel_any               = -1,        // Used for querying the state
-  CompLevel_all               = -1,        // Used for changing the state
   CompLevel_none              = 0,         // Interpreter
   CompLevel_simple            = 1,         // C1
   CompLevel_limited_profile   = 2,         // C1, invocation & backedge counters

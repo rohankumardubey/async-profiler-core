@@ -25,7 +25,7 @@
 struct jvmtiFrameInfoExtended {
     jmethodID method;
     jlocation location;
-    jlocation machinepc;
+    jlocation machine_pc;
     jint type;
     void* native_frame_address;
 };

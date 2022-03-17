@@ -88,24 +88,24 @@ enum StoredFrameType {
     FRAME_TYPE_C2               = '2',
 };
 
- struct ASGCT_CallFrame {
-    jint bci;
-    jmethodID method_id;
-    void *machinepc;
-    // first one bytes: FrameTypeId, then one byte for the CompLevel
-    int16_t type;
+struct ASGCT_CallFrame {
+    void *machine_pc;           // program counter, for C and native frames (frames of native methods)
+    uint8_t type;               // frame type (single byte)
+    uint8_t comp_level;         // highest compilation level of a method related to a Java frame
+    // information from original CallFrame
+    jint bci;                   // bci for Java frames
+    jmethodID method_id;        // method ID for Java frames
 
     int get_comp_level() {
-        return type >> 8;
+        return comp_level;
     }
 
     int get_frame_type() {
-        return type & 0xff;
+        return type;
     }
 
     bool is_non_java() { return get_frame_type() == FRAME_NATIVE ||
         get_frame_type() == FRAME_KERNEL || get_frame_type() == FRAME_CPP; }
-
 };
 
 int16_t encode_type(int frame_type, int comp_level) {

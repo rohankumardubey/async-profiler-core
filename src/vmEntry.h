@@ -116,10 +116,55 @@ struct ASGCT_CallTrace {
     JNIEnv* env;
     jint num_frames;
     ASGCT_CallFrame* frames;
-    void *frame_info;
 };
 
-typedef void (*AsyncGetCallTrace)(ASGCT_CallTrace*, jint, void*);
+
+// we translate the newer data structures directly into the older ones
+// this reduces the number of modification in async-profiler
+namespace new_asgct2 {
+    enum FrameTypeId {
+        FRAME_JAVA         = 1, // JIT compiled and interpreted
+        FRAME_JAVA_INLINED = 2, // inlined JIT compiled
+        FRAME_NATIVE       = 3, // native wrapper to call C methods from Java
+        FRAME_STUB         = 4, // VM generated stubs
+        FRAME_CPP          = 5  // C/C++/... frames
+    };
+    struct nf_frame {
+        intptr_t* sp; // stack pointer
+        void* pc;     // program counter
+    };
+
+    typedef nf_frame (*next_frame_fn)(nf_frame current);
+
+    typedef struct {
+        uint8_t type;            // frame type
+        uint8_t comp_level;      // compilation level, 0 is interpreted
+        uint16_t bci;            // 0 < bci < 65536
+        jmethodID method_id;
+    } JavaFrame;               // used for FRAME_JAVA and FRAME_JAVA_INLINED
+
+    typedef struct {
+        FrameTypeId type;  // frame type
+        void *pc;          // current program counter inside this frame
+    } NonJavaFrame;
+
+    typedef union {
+        FrameTypeId type;     // to distinguish between JavaFrame and NonJavaFrame
+        JavaFrame java_frame;
+        NonJavaFrame non_java_frame;
+    } CallFrame;
+
+    typedef struct {
+        JNIEnv *env_id;                 // environment to record trace for or null for current thread environment
+        jint num_frames;                // number of frames in this trace
+        CallFrame *frames;              // frames
+        void* frame_info;               // more information on frames
+    } CallTrace;
+};
+
+
+typedef void (*AsyncGetCallTrace)(new_asgct2::CallTrace *trace, jint depth, void* ucontext,
+    int32_t options, new_asgct2::next_frame_fn next_frame);
 
 typedef struct {
     void* unused[38];
@@ -164,6 +209,9 @@ class VM {
     static void* _libjvm;
     static void* _libjava;
     static AsyncGetCallTrace _asyncGetCallTrace;
+
+    static void asyncGetCallTrace(ASGCT_CallTrace *trace, jint max_depth, void *ucontext);
+
     static JVM_GetManagement _getManagement;
 
     static bool init(JavaVM* vm, bool attach);

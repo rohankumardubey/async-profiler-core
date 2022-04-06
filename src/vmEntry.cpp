@@ -50,6 +50,50 @@ void* VM::_libjava;
 AsyncGetCallTrace VM::_asyncGetCallTrace;
 JVM_GetManagement VM::_getManagement;
 
+void VM::asyncGetCallTrace(ASGCT_CallTrace *trace, jint max_depth, void *ucontext) {
+    new_asgct2::CallFrame new_frames[2048]; // large enough
+    if (max_depth > 2048) {
+        exit(0);
+    }
+    new_asgct2::CallTrace new_trace = {trace->env, 0, new_frames, NULL};
+    _asyncGetCallTrace(&new_trace, max_depth, ucontext, 1, NULL);
+    trace->num_frames = new_trace.num_frames;
+    if (new_trace.num_frames <= 0) {
+        return;
+    }
+    for (size_t i = 0; i < new_trace.num_frames; i++) {
+        new_asgct2::CallFrame frame = new_trace.frames[i];
+        if (frame.type == new_asgct2::FRAME_STUB || frame.type == new_asgct2::FRAME_CPP) {
+            new_asgct2::NonJavaFrame nframe = frame.non_java_frame;
+            ASGCT_CallFrame f = {
+                nframe.pc,
+                (uint8_t)FRAME_CPP,
+                nframe.type == new_asgct2::FRAME_STUB ? -1 : 0,
+                -4,
+                0
+            };
+            trace->frames[i] = f;
+        } else {
+            new_asgct2::JavaFrame jframe = frame.java_frame;
+            int type = 0;
+            if (jframe.type == new_asgct2::FRAME_JAVA) {
+                type = FRAME_INTERPRETED;
+            } else if (jframe.type == new_asgct2::FRAME_JAVA_INLINED) {
+                type = FRAME_INLINED;
+            } else {
+                type = FRAME_NATIVE;
+            }
+            ASGCT_CallFrame f = {
+                0,
+                type,
+                jframe.comp_level,
+                jframe.type == new_asgct2::FRAME_NATIVE ? -4 : jframe.bci,
+                jframe.method_id
+            };
+            trace->frames[i] = f;
+        }
+    }
+}
 
 static void wakeupHandler(int signo) {
     // Dummy handler for interrupting syscalls

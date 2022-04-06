@@ -381,7 +381,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
 
     JitWriteProtection jit(false);
     ASGCT_CallTrace trace = {jni, 0, frames};
-    VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+    VM::asyncGetCallTrace(&trace, max_depth, ucontext);
 
     if (trace.num_frames > 0) {
         return trace.num_frames;
@@ -402,7 +402,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
         if (!(_safe_mode & MOVE_SP) && CAN_MOVE_SP) {
             for (int extra_stack_slots = 1; extra_stack_slots <= 2; extra_stack_slots++) {
                 top_frame.sp() = sp + extra_stack_slots * sizeof(uintptr_t);
-                VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                VM::asyncGetCallTrace(&trace, max_depth, ucontext);
                 top_frame.sp() = sp;
 
                 if (trace.num_frames > 0) {
@@ -424,7 +424,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
             // otherwise AsyncGetCallTrace may crash
             if (!(_safe_mode & POP_FRAME) && top_frame.pop(is_entry_frame)) {
                 if (isAddressInCode((const void*)top_frame.pc())) {
-                    VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                    VM::asyncGetCallTrace(&trace, max_depth, ucontext);
                 }
                 top_frame.restore(pc, sp, fp);
 
@@ -441,7 +441,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
                     if (isAddressInCode(caller_pc)) {
                         top_frame.pc() = (uintptr_t)caller_pc;
                         top_frame.sp() = sp + (slot + 1) * sizeof(uintptr_t);
-                        VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                        VM::asyncGetCallTrace(&trace, max_depth, ucontext);
                         top_frame.restore(pc, sp, fp);
 
                         if (trace.num_frames > 0) {
@@ -458,7 +458,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
                 trace.frames = frames;
                 for (int extra_stack_slots = 3; extra_stack_slots <= 6; extra_stack_slots = (extra_stack_slots - 1) << 1) {
                     top_frame.sp() = sp + extra_stack_slots * sizeof(uintptr_t);
-                    VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                    VM::asyncGetCallTrace(&trace, max_depth, ucontext);
                     top_frame.sp() = sp;
 
                     if (trace.num_frames > 0) {
@@ -483,9 +483,9 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
                 if (!m->isNMethod() && m->frameSize() > 0 && m->frameCompleteOffset() == -1) {
                     m->setFrameCompleteOffset(0);
                 }
-                VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                VM::asyncGetCallTrace(&trace, max_depth, ucontext);
             } else if (findNativeLibrary((const void*)pc) != NULL) {
-                VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                VM::asyncGetCallTrace(&trace, max_depth, ucontext);
             }
 
             pc = 0;
@@ -499,7 +499,7 @@ int Profiler::getJavaTraceAsync(void* ucontext, ASGCT_CallFrame* frames, int max
             NMethod* m = CodeHeap::findNMethod((const void*)pc);
             if (m != NULL && !m->isNMethod() && m->frameSize() > 0 && m->frameCompleteOffset() == -1) {
                 m->setFrameCompleteOffset(0);
-                VM::_asyncGetCallTrace(&trace, max_depth, ucontext);
+                VM::asyncGetCallTrace(&trace, max_depth, ucontext);
             }
         }
     } else if (trace.num_frames == ticks_GC_active && !(_safe_mode & GC_TRACES)) {

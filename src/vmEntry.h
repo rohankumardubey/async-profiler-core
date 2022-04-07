@@ -149,7 +149,6 @@ namespace new_asgct2 {
     } CallFrame;
 
     typedef struct {
-        JNIEnv *env_id;                 // environment to record trace for or null for current thread environment
         jint num_frames;                // number of frames in this trace
         CallFrame *frames;              // frames
         void* frame_info;               // more information on frames

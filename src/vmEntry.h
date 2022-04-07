@@ -129,12 +129,6 @@ namespace new_asgct2 {
         FRAME_STUB         = 4, // VM generated stubs
         FRAME_CPP          = 5  // C/C++/... frames
     };
-    struct nf_frame {
-        intptr_t* sp; // stack pointer
-        void* pc;     // program counter
-    };
-
-    typedef nf_frame (*next_frame_fn)(nf_frame current);
 
     typedef struct {
         uint8_t type;            // frame type
@@ -164,7 +158,7 @@ namespace new_asgct2 {
 
 
 typedef void (*AsyncGetCallTrace)(new_asgct2::CallTrace *trace, jint depth, void* ucontext,
-    int32_t options, new_asgct2::next_frame_fn next_frame);
+    int32_t options);
 
 typedef struct {
     void* unused[38];

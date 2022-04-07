@@ -56,7 +56,7 @@ void VM::asyncGetCallTrace(ASGCT_CallTrace *trace, jint max_depth, void *ucontex
         exit(0);
     }
     new_asgct2::CallTrace new_trace = {trace->env, 0, new_frames, NULL};
-    _asyncGetCallTrace(&new_trace, max_depth, ucontext, 1, NULL);
+    _asyncGetCallTrace(&new_trace, max_depth, ucontext, 1);
     trace->num_frames = new_trace.num_frames;
     if (new_trace.num_frames <= 0) {
         return;

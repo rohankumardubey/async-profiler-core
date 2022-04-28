@@ -14,9 +14,15 @@
  * limitations under the License.
  */
 
+#include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/_types/_pid_t.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include "vmEntry.h"
 #include "arguments.h"
 #include "j9Ext.h"
@@ -48,7 +54,36 @@ jvmtiError (JNICALL *VM::_orig_RetransformClasses)(jvmtiEnv*, jint, const jclass
 
 void* VM::_libjvm;
 void* VM::_libjava;
-AsyncGetCallTrace VM::_asyncGetCallTrace;
+AsyncGetCallTrace VM::__asyncGetCallTrace;
+
+void VM::_asyncGetCallTrace(ASGCT_CallTrace* trace, jint depth, void* ucontext) {
+    ASGCT_CallTrace* mapped_trace = (ASGCT_CallTrace*)mmap(NULL, sizeof(AsyncGetCallTrace), PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    *mapped_trace = *trace;
+    ASGCT_CallFrame* mapped_frames = (ASGCT_CallFrame*)mmap(NULL, 16 * 4000, PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    int status;
+    trace->num_frames = -10;
+    pid_t pid = fork();
+    if (pid == 0) { // child process
+        printf("child\n");
+        mprotect(void *, size_t, int)
+        usleep(100000);
+        VM::__asyncGetCallTrace(mapped_trace, depth, ucontext);
+        exit(0);
+    } else { // parent process
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) {
+            printf("child exited with status of %d\n", WEXITSTATUS(status));
+        } else {
+            puts("child did not exit successfully");
+        }
+        //sleep(1);
+        trace->num_frames = mapped_trace->num_frames;
+        memcpy(mapped_frames, trace->frames, 2048);
+    }
+}
+
 JVM_GetManagement VM::_getManagement;
 
 
@@ -122,7 +157,7 @@ bool VM::init(JavaVM* vm, bool attach) {
     }
 
     _libjvm = getLibraryHandle("libjvm.so");
-    _asyncGetCallTrace = (AsyncGetCallTrace)dlsym(_libjvm, "AsyncGetCallTrace");
+    __asyncGetCallTrace = (AsyncGetCallTrace)dlsym(_libjvm, "AsyncGetCallTrace");
     _getManagement = (JVM_GetManagement)dlsym(_libjvm, "JVM_GetManagement");
 
     Profiler* profiler = Profiler::instance();
@@ -133,7 +168,7 @@ bool VM::init(JavaVM* vm, bool attach) {
 
     CodeCache* lib = isOpenJ9()
         ? profiler->findJvmLibrary("libj9vm")
-        : profiler->findNativeLibrary((const void*)_asyncGetCallTrace);
+        : profiler->findNativeLibrary((const void*)__asyncGetCallTrace);
     if (lib == NULL) {
         return false;  // TODO: verify
     }

@@ -125,7 +125,10 @@ class VM {
   public:
     static void* _libjvm;
     static void* _libjava;
-    static AsyncGetCallTrace _asyncGetCallTrace;
+    static AsyncGetCallTrace __asyncGetCallTrace;
+
+    static void _asyncGetCallTrace(ASGCT_CallTrace*, jint, void*);
+
     static JVM_GetManagement _getManagement;
 
     static bool init(JavaVM* vm, bool attach);

@@ -14,7 +14,26 @@ async-profiler can trace the following kinds of events:
 
 See our [Wiki](https://github.com/jvm-profiling-tools/async-profiler/wiki) or
 [3 hours playlist](https://www.youtube.com/playlist?list=PLNCLTEx3B8h4Yo_WvKWdLvI9mj1XpTKBr)
-to learn about all features. 
+to learn about all features.
+
+
+## This fork
+
+There has recently been a debate on wether calling ASGCT alters any VM state.
+This is important because we could easily handle segmentation faults in
+ASGCT if we could be certain that it did not modify any memory besides
+its small portion of the stack and the result memory area.
+
+There are two options for this: 1. static analysis and thorough code walks,
+and 2. calling ASGCT with all memory read only that it is not supposed to
+alter. This fork represents the latter approach. It is built into a fork of
+AsyncProfiler to make it integrate easily into my jdk-profiling-tester
+project (and because AsyncProfiler already contains the infrastructure and
+boiler plate code to use ASGCT).
+
+This fork works like the normal AsyncProfiler but is far slower and requires
+far more memory, as every ASGCT causes the copy of the whole page table
+via `fork`.
 
 ## Download
 

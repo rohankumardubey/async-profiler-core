@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
@@ -65,186 +66,24 @@ void* VM::_libjvm;
 void* VM::_libjava;
 AsyncGetCallTrace VM::__asyncGetCallTrace;
 
-// the userfaultfd stuff is based on https://blog.lizzie.io/using-userfaultfd.html
-// and the examples from the userfaultfd man page
-// and https://github.com/adityamandaleeka/userfaultfd-wp-writetracking/blob/main/uffd.cpp
-
-#define PAGESIZE 4096
-
-
-// Register a range of memory for use with UFFD WP
-int register_range_with_wp(long int uffd, void* addr, uint64_t length)
-{
-    struct uffdio_range range = {
-        (__u64)addr, 
-        length
-        };
-
-    unsigned int ctls = 0;
-    struct uffdio_register reg_args = {
-        range,
-        UFFDIO_REGISTER_MODE_WP,
-        ctls
-    };
-
-    int ret = ioctl(uffd, UFFDIO_REGISTER, &reg_args);
-
-    if (ret != 0)
-    {
-        printf("UFFDIO_REGISTER failed. errno: %d\n", errno);
-        exit(-1);
-    }
-
-    return ret;
-}
-
-// Protect a range with UFFD WP
-int protect_range(long int uffd, void* addr, uint64_t length)
-{
-    struct uffdio_range range = {
-        (__u64)addr,
-        length
-        };
-    struct uffdio_writeprotect wp_args = {range, UFFDIO_WRITEPROTECT_MODE_WP};
-    return ioctl(uffd, UFFDIO_WRITEPROTECT, &wp_args);
-}
-
-static void *fault_handler_thread(void *arg)
-{
-
-    static struct uffd_msg msg;   /* Data read from userfaultfd */
-    static int fault_cnt = 0;     /* Number of faults so far handled */
-    long uffd;                    /* userfaultfd file descriptor */
-    struct uffdio_copy uffdio_copy;
-    ssize_t nread;
-
-    uffd = (long) arg;
-
-    /* Loop, handling incoming events on the userfaultfd
-        file descriptor. */
-
-    struct pollfd evt = {
-        uffd,
-        POLLIN,
-        0
-        };
-
-    while (poll(&evt, 1, 10)){
-
-        if (evt.revents & (POLLERR | POLLHUP))
-        {
-            printf("ERROR: Poll Error!\n");
-            exit(-1);
-        }
-
-        /* Read an event from the userfaultfd. */
-
-        nread = read(uffd, &msg, sizeof(msg));
-        if (nread == 0) {
-            printf("EOF on userfaultfd!\n");
-        }
-
-        if (nread == -1)
-            continue;
-
-        /* Display info about the page-fault event. */
-
-        printf("    UFFD_EVENT_PAGEFAULT event: \n");
-        printf("flags = %lx; ", msg.arg.pagefault.flags);
-        printf("address = %lx\n", msg.arg.pagefault.address);
-    }
-}
-
 void _asgct_child(ASGCT_CallTrace *mapped_trace, jint depth, void* ucontext) {
     std::array<procmap_entry, 100> entries;
-    pmparser_parse(getpid(), entries);
-    struct uffdio_api api = { .api = UFFD_API };
-    int return_code = 0;
-    pthread_t thr; // id of the page fault handler thread
-    void *thr_status;
-    int s = 0;
-    int fd = syscall(SYS_userfaultfd, O_NONBLOCK | O_CLOEXEC);
-	if (fd == -1) {
-		fprintf(stderr, "++ userfaultfd failed: %s\n, you might be able to remedy this by calling "
-         "sudo sysctl -w vm.unprivileged_userfaultfd=1", strerror(errno));
-		goto cleanup_error;
-	}
-	/* When first opened the userfaultfd must be enabled invoking the
-	   UFFDIO_API ioctl specifying a uffdio_api.api value set to UFFD_API
-	   (or a later API version) which will specify the read/POLLIN protocol
-	   userland intends to speak on the UFFD and the uffdio_api.features
-	   userland requires. The UFFDIO_API ioctl if successful (i.e. if the
-	   requested uffdio_api.api is spoken also by the running kernel and the
-	   requested features are going to be enabled) will return into
-	   uffdio_api.features and uffdio_api.ioctls two 64bit bitmasks of
-	   respectively all the available features of the read(2) protocol and
-	   the generic ioctl available. */
-	if (ioctl(fd, UFFDIO_API, &api)) {
-		fprintf(stderr, "++ ioctl(fd, UFFDIO_API, ...) failed: %m\n");
-		goto cleanup_error;
-	}
-    /* "Once the userfaultfd has been enabled the UFFDIO_REGISTER ioctl
-	   should be invoked (if present in the returned uffdio_api.ioctls
-	   bitmask) to register a memory range in the userfaultfd by setting the
-	   uffdio_register structure accordingly. The uffdio_register.mode
-	   bitmask will specify to the kernel which kind of faults to track for
-	   the range (UFFDIO_REGISTER_MODE_MISSING would track missing
-	   pages). The UFFDIO_REGISTER ioctl will return the uffdio_register
-	   . ioctls bitmask of ioctls that are suitable to resolve userfaults on
-	   the range registered. Not all ioctls will necessarily be supported
-	   for all memory types depending on the underlying virtual memory
-	   backend (anonymous memory vs tmpfs vs real filebacked mappings)." */
-	if (api.api != UFFD_API) {
-		fprintf(stderr, "++ unexepcted UFFD api version.\n");
-		goto cleanup_error;
-	}
+    int num = pmparser_parse(getpid(), entries);
     
     procmap_entry example_entry;
 
-    for (auto &entry : entries) {
+    for (int i = 0; i < num; i++) {
+        auto &entry = entries.at(i);
         if (entry.is_w && entry.is_heap) {
-            std::cout << "    " << entry.addr_start  << " " << entry.addr_end << " " << (void*)entry.length << "\n";
-            uffdio_register reg = {
-                .range = {
-                    .start = (unsigned long) entry.addr_start,
-                    .len = (unsigned long)entry.length
-                },
-                .mode = UFFDIO_REGISTER_MODE_WP,
-                0
-            };
-            if (register_range_with_wp(fd, entry.addr_start, entry.length) != 0) {
-                fprintf(stderr, "++ ioctl(fd, UFFDIO_REGISTER, ...) failed: %m\n");
-                goto cleanup_error;
-            }
-            if (protect_range(fd, entry.addr_start, entry.length) != 0) {
-                fprintf(stderr, "++ ioctl(fd, UFFDIO_WRITEPROTECT, ...) failed: %m\n");
-                goto cleanup_error;
-            }
-            /*if (reg.ioctls != UFFD_API_RANGE_IOCTLS) {
-                fprintf(stderr, "++ unexpected UFFD ioctls.\n");
-                goto cleanup_error;
-            }*/
+            std::cout << "    " << entry.addr_start  << " " << entry.addr_end << " " << entry.length << "\n";
             example_entry = entry;
-            //mprotect(entry.addr_start, entry.length, PROT_READ);
+            mprotect(entry.addr_start, entry.length, PROT_READ);
         }
-    }
-    s = pthread_create(&thr, NULL, fault_handler_thread, (void *) fd);
-
-    if (s != 0) {
-        errno = s;
-        printf("pthread_create");
-        exit(1);
     }
 
     //((int*)example_entry.addr_start)[100] = 100;
-
     VM::__asyncGetCallTrace(mapped_trace, depth, ucontext);
-    goto cleanup;
-
-cleanup_error:
-	return_code = 1;
-cleanup:
-    exit(return_code);
+    syscall(SYS_exit);
 }
 
 ASGCT_CallTrace *mapped_trace;
@@ -257,17 +96,11 @@ void VM::_asyncGetCallTrace(ASGCT_CallTrace* trace, jint depth, void* ucontext) 
     trace->num_frames = -10;
     pid_t pid = fork();
     if (pid == 0) { // child process
-        printf("child\n");
         _asgct_child(mapped_trace, depth, ucontext);
     } else { // parent process
-        /*waitpid(pid, &status, 0);
-        if (WIFEXITED(status)) {
-            printf("child exited with status of %d\n", WEXITSTATUS(status));
-        } else {
-            puts("child did not exit successfully");
-        }
+        waitpid(pid, &status, 0);
         trace->num_frames = mapped_trace->num_frames;
-        memcpy(mapped_frames, trace->frames, 2048);*/
+        memcpy(mapped_frames, trace->frames, 2048);
         trace->num_frames = 0;
     }
 }

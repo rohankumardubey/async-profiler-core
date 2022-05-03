@@ -27,6 +27,7 @@
 #include "perfEvents.h"
 #include "allocTracer.h"
 #include "lockTracer.h"
+#include "vmEntry.h"
 #include "wallClock.h"
 #include "j9ObjectSampler.h"
 #include "j9StackTraces.h"

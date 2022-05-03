@@ -35,6 +35,8 @@ This fork works like the normal AsyncProfiler but is far slower and requires
 far more memory, as every ASGCT causes the copy of the whole page table
 via `fork`.
 
+It currently only works on Linux with JDK release builds.
+
 ## Download
 
 Current release (2.7):

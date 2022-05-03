@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
+#include <array>
 #include <csignal>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
@@ -22,6 +24,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <ucontext.h>
 #include <vector>
 #include <fcntl.h>
 #include <poll.h>
@@ -32,6 +35,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <linux/userfaultfd.h>
+#include "stackFrame.h"
 #include "vmEntry.h"
 #include "arguments.h"
 #include "j9Ext.h"
@@ -44,6 +48,7 @@
 #include "log.h"
 #include "vmStructs.h"
 #include "pmparser.h"
+#include "safeAccess.h"
 
 
 // JVM TI agent return codes
@@ -65,29 +70,106 @@ jvmtiError (JNICALL *VM::_orig_RetransformClasses)(jvmtiEnv*, jint, const jclass
 void* VM::_libjvm;
 void* VM::_libjava;
 AsyncGetCallTrace VM::__asyncGetCallTrace;
-
-void _asgct_child(ASGCT_CallTrace *mapped_trace, jint depth, void* ucontext) {
-    std::array<procmap_entry, 100> entries;
-    int num = pmparser_parse(getpid(), entries);
-    
-    procmap_entry example_entry;
-
-    for (int i = 0; i < num; i++) {
-        auto &entry = entries.at(i);
-        if (entry.is_w && entry.is_heap) {
-            std::cout << "    " << entry.addr_start  << " " << entry.addr_end << " " << entry.length << "\n";
-            example_entry = entry;
-            mprotect(entry.addr_start, entry.length, PROT_READ);
-        }
-    }
-
-    //((int*)example_entry.addr_start)[100] = 100;
-    VM::__asyncGetCallTrace(mapped_trace, depth, ucontext);
-    syscall(SYS_exit);
-}
-
 ASGCT_CallTrace *mapped_trace;
 ASGCT_CallFrame *mapped_frames;
+size_t mapped_frames_length;
+
+
+void _print_segv_info(void* ucontext) {
+    const intptr_t MIN_VALID_PC = 0x1000;
+const intptr_t MAX_WALK_SIZE = 0x100000;
+const intptr_t MAX_FRAME_SIZE = 0x40000;
+    const int max_depth = 1000;
+    
+    const void* pc;
+    uintptr_t fp;
+    uintptr_t prev_fp = (uintptr_t)&fp;
+    uintptr_t bottom = prev_fp + MAX_WALK_SIZE;
+
+    if (ucontext == NULL) {
+        pc = __builtin_return_address(0);
+        fp = (uintptr_t)__builtin_frame_address(1);
+    } else {
+        StackFrame frame(ucontext);
+        pc = (const void*)frame.pc();
+        fp = frame.fp();
+    }
+
+    int depth = 0;
+
+    // Walk until the bottom of the stack or until the first Java frame
+    while (depth < max_depth) {
+         if (CodeHeap::contains(pc)) {
+            break;
+         }
+
+        const char* current_method_name = Profiler::instance()->findNativeMethod(pc);
+        if (current_method_name != NULL && NativeFunc::isMarked(current_method_name)) {
+            // This is C++ interpreter frame, this and later frames should be reported
+            // as Java frames returned by AGCT. Terminate the scan here.
+            break;
+        }
+        printf("%s\n", current_method_name);
+
+        // Check if the next frame is below on the current stack
+        if (fp <= prev_fp || fp >= prev_fp + MAX_FRAME_SIZE || fp >= bottom) {
+            break;
+        }
+
+        // Frame pointer must be word aligned
+        if ((fp & (sizeof(uintptr_t) - 1)) != 0) {
+            break;
+        }
+
+        pc = stripPointer(SafeAccess::load((void**)fp + FRAME_PC_SLOT));
+        if (pc < (const void*)MIN_VALID_PC || pc > (const void*)-MIN_VALID_PC) {
+            break;
+        }
+
+        prev_fp = fp;
+        fp = *(uintptr_t*)fp;
+    }
+}
+
+void _modify_protection(std::array<procmap_entry, 100> &entries, int num, void* ucontext, bool read_only) {
+   for (int i = 0; i < num; i++) {
+        auto &entry = entries.at(i);
+        if (entry.is_w && !entry.is_stack) {
+            //printf("%p - %p\n", entry.addr_start, entry.length);
+            mprotect(entry.addr_start, entry.length, (entry.is_x ? PROT_EXEC : 0) | ((!read_only && entry.is_w) ? PROT_WRITE : 0) | PROT_READ);
+          //  *((int*)entry.addr_start) = 10;
+        }
+        if (entry.is_stack) {
+            auto len = (size_t)StackFrame(ucontext).sp() - 10000 - (size_t)entry.addr_start;
+            mprotect(entry.addr_start, len, (entry.is_x ? PROT_EXEC : 0) | ((!read_only && entry.is_w) ? PROT_WRITE : 0) | PROT_READ);
+        }
+    }
+    // handle the mapped_trace and mapped_frames: they have to be writable
+    mprotect(mapped_trace, sizeof(ASGCT_CallTrace), PROT_READ | PROT_WRITE);
+    mprotect(mapped_frames, mapped_frames_length, PROT_READ | PROT_WRITE);
+}
+
+void _asgct_segv_handle(int signo, siginfo_t* siginfo, void* ucontext) {
+    printf("sdf\n");
+        StackFrame frame(ucontext); 
+        mprotect(siginfo->si_lower, (size_t)siginfo->si_upper - (size_t)siginfo->si_lower, PROT_READ | PROT_WRITE);
+}
+
+void _asgct_child(ASGCT_CallTrace *mapped_trace, jint depth, void* ucontext) {
+
+    OS::replaceCrashHandler(_asgct_segv_handle);
+        int s[10000];
+    std::array<procmap_entry, 100> entries;
+    int num = pmparser_parse(getpid(), entries);
+
+    _modify_protection(entries, num, ucontext, true);
+    mapped_trace->env = VM::jni();
+    //getcontext((ucontext_t*)ucontext);
+    VM::__asyncGetCallTrace(mapped_trace, depth, ucontext);
+    printf("%d\n", mapped_trace->num_frames);
+    _modify_protection(entries, num, ucontext, false);
+    exit(0);
+}
 
 void VM::_asyncGetCallTrace(ASGCT_CallTrace* trace, jint depth, void* ucontext) {
     *mapped_trace = *trace;
@@ -98,10 +180,10 @@ void VM::_asyncGetCallTrace(ASGCT_CallTrace* trace, jint depth, void* ucontext) 
     if (pid == 0) { // child process
         _asgct_child(mapped_trace, depth, ucontext);
     } else { // parent process
-        waitpid(pid, &status, 0);
+        /*waitpid(pid, &status, 0);
         trace->num_frames = mapped_trace->num_frames;
-        memcpy(mapped_frames, trace->frames, 2048);
-        trace->num_frames = 0;
+        memcpy(mapped_frames, trace->frames, mapped_frames_length);
+        trace->num_frames = 0;*/
     }
 }
 
@@ -139,9 +221,9 @@ bool VM::init(JavaVM* vm, bool attach) {
 
     mapped_trace = (ASGCT_CallTrace*)mmap(NULL, sizeof(AsyncGetCallTrace), PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    mapped_frames = (ASGCT_CallFrame*)mmap(NULL, 16 * 4000, PROT_READ | PROT_WRITE,
+    mapped_frames_length = 16 * 4048;
+    mapped_frames = (ASGCT_CallFrame*)mmap(NULL, mapped_frames_length, PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
     if (_jvmti != NULL) return true;
 
     _vm = vm;

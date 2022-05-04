@@ -51,11 +51,20 @@
 #include "pmparser.h"
 #include "safeAccess.h"
 #include <sys/socket.h>
+/*#include "xed/xed-types.h"
+#include "xed/xed-state.h"
+#include "xed/xed-decoded-inst.h"*/
 
 /*extern "C" {
     void xed_tables_init();
-}*/
-
+     xed_error_enum_t
+xed_ild_decode(xed_decoded_inst_t* xedd,
+               const xed_uint8_t* itext,
+               const unsigned int bytes);
+              void xed_decoded_inst_zero_set_mode(xed_decoded_inst_t* p,
+                               const xed_state_t* dstate);
+}
+*/
 
 // JVM TI agent return codes
 const int ARGUMENTS_ERROR = 100;
@@ -148,7 +157,7 @@ void* segs[1000];
 int segs_num;
 
 /** parse into segs */
-void pmparser2_parse(int pid, void* ucontext){
+void pmparser2_parse(int pid, void* ucontext, ASGCT_CallTrace *trace){
 	char maps_path[1000];
 	if(pid>=0 ){
 		sprintf(maps_path,"/proc/%d/maps",pid);
@@ -218,6 +227,12 @@ void pmparser2_parse(int pid, void* ucontext){
             if (entry.addr_start <= &method && &method < entry.addr_end) {
                 continue;
             }
+            if (entry.addr_start <= trace && trace < entry.addr_end) {
+                continue;
+            }
+            if (entry.addr_start <= trace->frames && trace->frames < entry.addr_end) {
+                continue;
+            }
                 if (entry.is_w && !entry.is_stack && (entry.is_java || entry.is_heap || entry.is_anon)) {
            //printf("%p - %p inode %d\n", entry.addr_start, entry.addr_end, entry.inode);
             
@@ -264,9 +279,22 @@ void _asgct_segv_handle(int signo, siginfo_t* siginfo, void* ucontext) {
     //printf("after pro%p\n", frame.pc());
     _print_segv_info(ucontext);
 
-    /*xed_bool_t long_mode = 1;
+//StackFrame frame(ucontext);
+
+    // adapted from https://stackoverflow.com/a/44228587
+   /* xed_bool_t long_mode = 1;
     xed_decoded_inst_t xedd;
-    xed_state_t dstate;*/
+    xed_state_t dstate;
+    dstate.mmode=XED_MACHINE_MODE_LONG_64;
+    mcontext_t* mcontext = &((ucontext_t*)ucontext)->uc_mcontext;
+    uint8_t* code = (uint8_t*)mcontext->gregs[REG_RIP];
+    unsigned char* itext = (unsigned char*)code;//frame.pc();*/
+    //xed_decoded_inst_zero_set_mode(&xedd, &dstate);
+    //xed_ild_decode(&xedd, itext, XED_MAX_INSTRUCTION_BYTES);
+    //frame.pc() += xedd._decoded_length;
+    //mcontext->gregs[REG_RIP] += xedd._decoded_length;
+    //printf("length = %u\n", xedd._decoded_length);
+
     //StackFrame(ucontext).pc() += 2;
     //raise(SIGABRT);
     //exit(0);
@@ -280,13 +308,13 @@ void _asgct_child(const procmap_array &entries, int num,
     ASGCT_CallTrace *trace, jint depth, void* ucontext, int socket) {
     OS::replaceCrashHandler(_asgct_segv_handle);
         int s[100000];
-    pmparser2_parse(g_pid, ucontext);
+    pmparser2_parse(g_pid, ucontext, trace);
     _modify_protection(trace, ucontext, true);
     //printf("%d\n", __LINE__);
     trace->env = VM::jni();
     //getcontext((ucontext_t*)ucontext);
     VM::__asyncGetCallTrace(trace, depth, ucontext);
-   
+
     _modify_protection(trace, ucontext, false);
     for (int i = 0; i < method_count; i++) {
         printf("%s\n", method[i]);

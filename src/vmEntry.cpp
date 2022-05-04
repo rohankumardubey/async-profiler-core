@@ -15,6 +15,7 @@
  */
 
 #include <array>
+#include <bits/types/siginfo_t.h>
 #include <csignal>
 #include <cstddef>
 #include <cstdlib>
@@ -49,6 +50,11 @@
 #include "vmStructs.h"
 #include "pmparser.h"
 #include "safeAccess.h"
+#include <sys/socket.h>
+
+/*extern "C" {
+    void xed_tables_init();
+}*/
 
 
 // JVM TI agent return codes
@@ -70,10 +76,9 @@ jvmtiError (JNICALL *VM::_orig_RetransformClasses)(jvmtiEnv*, jint, const jclass
 void* VM::_libjvm;
 void* VM::_libjava;
 AsyncGetCallTrace VM::__asyncGetCallTrace;
-ASGCT_CallTrace *mapped_trace;
-ASGCT_CallFrame *mapped_frames;
-size_t mapped_frames_length;
-
+char method[100][1000];
+void* method_pc[100];
+int method_count = 0;
 
 void _print_segv_info(void* ucontext) {
     const intptr_t MIN_VALID_PC = 0x1000;
@@ -104,12 +109,18 @@ const intptr_t MAX_FRAME_SIZE = 0x40000;
          }
 
         const char* current_method_name = Profiler::instance()->findNativeMethod(pc);
+        if (method_count < 100) {
+            strcpy(method[method_count], current_method_name);
+            method_pc[method_count] = (void*)pc;
+        }
+        method_count++;
+        break;
         if (current_method_name != NULL && NativeFunc::isMarked(current_method_name)) {
             // This is C++ interpreter frame, this and later frames should be reported
             // as Java frames returned by AGCT. Terminate the scan here.
             break;
         }
-        printf("%s\n", current_method_name);
+        //printf("%s\n", current_method_name);
 
         // Check if the next frame is below on the current stack
         if (fp <= prev_fp || fp >= prev_fp + MAX_FRAME_SIZE || fp >= bottom) {
@@ -131,59 +142,196 @@ const intptr_t MAX_FRAME_SIZE = 0x40000;
     }
 }
 
-void _modify_protection(std::array<procmap_entry, 100> &entries, int num, void* ucontext, bool read_only) {
-   for (int i = 0; i < num; i++) {
-        auto &entry = entries.at(i);
-        if (entry.is_w && !entry.is_stack) {
-            //printf("%p - %p\n", entry.addr_start, entry.length);
-            mprotect(entry.addr_start, entry.length, (entry.is_x ? PROT_EXEC : 0) | ((!read_only && entry.is_w) ? PROT_WRITE : 0) | PROT_READ);
-          //  *((int*)entry.addr_start) = 10;
+int g_pid = -1;
+
+void* segs[1000];
+int segs_num;
+
+/** parse into segs */
+void pmparser2_parse(int pid, void* ucontext){
+	char maps_path[1000];
+	if(pid>=0 ){
+		sprintf(maps_path,"/proc/%d/maps",pid);
+	}else{
+		sprintf(maps_path,"/proc/self/maps");
+	}
+	std::ifstream file;
+    file.open(maps_path);
+
+	int ind=0;
+    char buf[1000];
+	int c;
+
+	char addr_start_str[200], addr_end_str[200], perm_str[80], offset_str[200], dev_str[100], inode_str[300], pathname_str[1000];
+	
+	int i = 0;
+    segs_num = 0;
+    std::string line;
+    while (std::getline(file, line) && i < max_procmap_entries) {
+		memcpy(buf, line.c_str(), line.size() + 1);
+		//printf("---> %s\n", buf);
+		//allocate a node
+		//fill the node
+		_pmparser_split_line(buf, addr_start_str, addr_end_str, perm_str, offset_str, dev_str, inode_str, pathname_str);		//addr_start & addr_end
+        unsigned long addr_start;
+        sscanf(addr_start_str, "%lx", &addr_start);
+        unsigned long addr_end;
+		sscanf(addr_end_str, "%lx", &addr_end);
+		//size
+		unsigned long length = addr_end - addr_start;
+
+        long offset;
+		//offset
+		sscanf(offset_str,"%lx", &offset);
+		//inode
+		int inode = atoi(inode_str);
+
+		if (length == 0) {
+			continue;
+		}
+
+		if (perm_str[0] == 'r') {
+			//printf("%s\n", buf);
+		}
+
+        procmap_entry entry{
+            (void*)addr_start,
+            (void*)addr_end,
+            length,
+            perm_str[0] == 'r',
+            perm_str[1] == 'w',
+            perm_str[2] == 'x',
+            perm_str[3] == 'p',
+            strcmp(pathname_str, "[stack]") == 0,
+            strcmp(pathname_str, "[heap]") == 0,
+			strstr(pathname_str, "jdk") != 0,
+			inode == 0,
+			strstr(pathname_str, "lib/modules") != 0,
+			inode
+        };
+        if (entry.is_x) {
+            continue;
+        }
+            if ((size_t)entry.addr_start <= StackFrame(ucontext).sp() && (size_t)entry.addr_end >= StackFrame(ucontext).sp()) {
+                continue;
+            }
+            if (entry.addr_start <= &method && &method < entry.addr_end) {
+                continue;
+            }
+                if (entry.is_w && !entry.is_stack && (entry.is_java || entry.is_heap || entry.is_anon)) {
+           //printf("%p - %p inode %d\n", entry.addr_start, entry.addr_end, entry.inode);
+            
+                    segs[segs_num] = (void*)addr_start;
+        segs[segs_num + 1] = (void*)addr_end;
+        segs_num += 2;
+             //printf("+\n");
+            //*((int*)entry.addr_start) = 10;
         }
         if (entry.is_stack) {
             auto len = (size_t)StackFrame(ucontext).sp() - 10000 - (size_t)entry.addr_start;
-            mprotect(entry.addr_start, len, (entry.is_x ? PROT_EXEC : 0) | ((!read_only && entry.is_w) ? PROT_WRITE : 0) | PROT_READ);
+                    segs[segs_num] = (void*)addr_start;
+        segs[segs_num + 1] = (void*)(addr_start + len);
+        segs_num += 2;
         }
-    }
+		i++;
+	}
+}
+
+
+void _modify_protection(ASGCT_CallTrace *trace, void* ucontext, bool read_only) {
+   for (int i = 0; i < segs_num; i += 2) {
+        void* start = segs[i];
+        void* end = segs[i + 1];
+        mprotect(start, (size_t)end - (size_t)start, (read_only ? 0 : PROT_WRITE) | PROT_READ);
+   }
     // handle the mapped_trace and mapped_frames: they have to be writable
-    mprotect(mapped_trace, sizeof(ASGCT_CallTrace), PROT_READ | PROT_WRITE);
-    mprotect(mapped_frames, mapped_frames_length, PROT_READ | PROT_WRITE);
+    //mprotect(trace, sizeof(ASGCT_CallTrace), PROT_READ | PROT_WRITE);
+    //mprotect(trace->frames, sizeof(ASGCT_CallFrame) * 1024, PROT_READ | PROT_WRITE);
 }
 
 void _asgct_segv_handle(int signo, siginfo_t* siginfo, void* ucontext) {
-    printf("sdf\n");
-        StackFrame frame(ucontext); 
-        mprotect(siginfo->si_lower, (size_t)siginfo->si_upper - (size_t)siginfo->si_lower, PROT_READ | PROT_WRITE);
+    void* addr = siginfo->si_addr;
+    for (int i = 0; i < segs_num; i += 2) {
+        void* start = segs[i];
+        void* end = segs[i + 1];
+        if (start <= addr && addr < end) {
+            mprotect(start, (size_t)end - (size_t)start, PROT_READ | PROT_WRITE);
+            //mprotect((void*)(((size_t)addr | 4048) - 4048), (size_t)end - (size_t)addr, PROT_READ | PROT_WRITE);
+        }
+    }
+    //printf("sdf\n");
+   
+    //printf("after pro%p\n", frame.pc());
+    _print_segv_info(ucontext);
+
+    /*xed_bool_t long_mode = 1;
+    xed_decoded_inst_t xedd;
+    xed_state_t dstate;*/
+    //StackFrame(ucontext).pc() += 2;
+    //raise(SIGABRT);
+    //exit(0);
 }
 
-void _asgct_child(ASGCT_CallTrace *mapped_trace, jint depth, void* ucontext) {
+ASGCT_CallTrace* g_trace;
+jint g_depth;
 
+
+void _asgct_child(const procmap_array &entries, int num, 
+    ASGCT_CallTrace *trace, jint depth, void* ucontext, int socket) {
     OS::replaceCrashHandler(_asgct_segv_handle);
-        int s[10000];
-    std::array<procmap_entry, 100> entries;
-    int num = pmparser_parse(getpid(), entries);
-
-    _modify_protection(entries, num, ucontext, true);
-    mapped_trace->env = VM::jni();
+        int s[100000];
+    pmparser2_parse(g_pid, ucontext);
+    _modify_protection(trace, ucontext, true);
+    //printf("%d\n", __LINE__);
+    trace->env = VM::jni();
     //getcontext((ucontext_t*)ucontext);
-    VM::__asyncGetCallTrace(mapped_trace, depth, ucontext);
-    printf("%d\n", mapped_trace->num_frames);
-    _modify_protection(entries, num, ucontext, false);
-    exit(0);
+    VM::__asyncGetCallTrace(trace, depth, ucontext);
+   
+    _modify_protection(trace, ucontext, false);
+    for (int i = 0; i < method_count; i++) {
+        printf("%s\n", method[i]);
+        void* pc = method_pc[i];
+        /*CodeCache* nl = Profiler::instance()->findNativeLibrary(pc);
+        printf("%s\n", nl->name());
+        char buf[1000];
+        sprintf(buf, "addr2line -f -e %s %p", nl->name(), pc);
+        printf("command: %s\n", buf);
+        system(buf);*/
+    }
+    //exit(0);
 }
+
+int in_child = 0;
 
 void VM::_asyncGetCallTrace(ASGCT_CallTrace* trace, jint depth, void* ucontext) {
-    *mapped_trace = *trace;
-    mapped_trace->frames = mapped_frames;
+    if (g_pid == -1) {
+        g_pid = getpid();
+    }
+    if (in_child > 3) {
+        return;
+    }
+    procmap_array entries;
+    //int num = pmparser_parse(g_pid, entries);
+
     int status;
     trace->num_frames = -10;
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
+        perror("socketpair");
+        exit(1);
+    }
     pid_t pid = fork();
     if (pid == 0) { // child process
-        _asgct_child(mapped_trace, depth, ucontext);
+        in_child++;
+        _asgct_child(entries, 1, trace, depth, ucontext, sv[0]);
     } else { // parent process
-        /*waitpid(pid, &status, 0);
-        trace->num_frames = mapped_trace->num_frames;
-        memcpy(mapped_frames, trace->frames, mapped_frames_length);
-        trace->num_frames = 0;*/
+        int socket = sv[1];
+        char buf;
+        //read(socket, &buf, 1); // wait for the signal handler to be registered
+        //usleep(1); // sleep so that the fork can escape from the signal handler
+        //kill(pid, SIGUSR1);
+        //waitpid(pid, &status, 0);
+        trace->num_frames = 0;
     }
 }
 
@@ -218,12 +366,8 @@ static bool isOpenJ9JitStub(const char* blob_name) {
 
 
 bool VM::init(JavaVM* vm, bool attach) {
+    //xed_tables_init();
 
-    mapped_trace = (ASGCT_CallTrace*)mmap(NULL, sizeof(AsyncGetCallTrace), PROT_READ | PROT_WRITE,
-                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    mapped_frames_length = 16 * 4048;
-    mapped_frames = (ASGCT_CallFrame*)mmap(NULL, mapped_frames_length, PROT_READ | PROT_WRITE,
-                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (_jvmti != NULL) return true;
 
     _vm = vm;

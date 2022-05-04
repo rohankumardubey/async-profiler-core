@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <csignal>
 #ifdef __linux__
 
 #include <arpa/inet.h>
@@ -257,6 +258,7 @@ SigAction OS::replaceCrashHandler(SigAction action) {
     sigaction(SIGSEGV, NULL, &sa);
     SigAction old_action = sa.sa_sigaction;
     sa.sa_sigaction = action;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
     sigaction(SIGSEGV, &sa, NULL);
     return old_action;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Andrei Pangin
+ * Copyright 2022 Andrei Pangin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,36 +16,117 @@
 
 #include <string.h>
 #include "objectSampler.h"
-#include "j9Ext.h"
 #include "profiler.h"
 
 
 u64 ObjectSampler::_interval;
+bool ObjectSampler::_live;
 volatile u64 ObjectSampler::_allocated_bytes;
 
 
-void ObjectSampler::JavaObjectAlloc(jvmtiEnv* jvmti, JNIEnv* jni, jthread thread,
-                                    jobject object, jclass object_klass, jlong size) {
+class LiveRefs {
+  private:
+    enum { MAX_REFS = 1024 };
+
+    SpinLock _lock;
+    jweak _refs[MAX_REFS];
+    jlong _sizes[MAX_REFS];
+    u32 _traces[MAX_REFS];
+
+    static inline bool collected(jweak w) {
+        return *(void**)((uintptr_t)w & ~(uintptr_t)1) == NULL;
+    }
+
+    void set(u32 index, jweak w, jlong size, u32 call_trace_id) {
+        _refs[index] = w;
+        _sizes[index] = size;
+        _traces[index] = call_trace_id;
+    }
+
+  public:
+    LiveRefs() : _lock(1) {
+    }
+
+    void init() {
+        memset(_refs, 0, sizeof(_refs));
+        memset(_sizes, 0, sizeof(_sizes));
+        memset(_traces, 0, sizeof(_traces));
+
+        _lock.unlock();
+    }
+
+    void add(JNIEnv* jni, jobject object, jlong size, u32 call_trace_id) {
+        jweak wobject = jni->NewWeakGlobalRef(object);
+        if (wobject == NULL) {
+            return;
+        }
+
+        if (_lock.tryLock()) {
+            jlong min_size = size;
+            u32 min_index = 0;
+
+            u32 start = (((uintptr_t)object >> 4) * 31 + ((uintptr_t)jni >> 4) + call_trace_id) & (MAX_REFS - 1);
+            u32 i = start;
+            do {
+                jweak w = _refs[i];
+                if (w == NULL) {
+                    set(i, wobject, size, call_trace_id);
+                    _lock.unlock();
+                    return;
+                } else if (collected(w)) {
+                    jni->DeleteWeakGlobalRef(w);
+                    set(i, wobject, size, call_trace_id);
+                    _lock.unlock();
+                    return;
+                } else if (_sizes[i] < min_size) {
+                    min_size = _sizes[i];
+                    min_index = i;
+                }
+            } while ((i = (i + 1) & (MAX_REFS - 1)) != start);
+
+            if (min_size < size) {
+                jni->DeleteWeakGlobalRef(_refs[min_index]);
+                set(min_index, wobject, size, call_trace_id);
+                _lock.unlock();
+                return;
+            }
+
+            _lock.unlock();
+        }
+
+        jni->DeleteWeakGlobalRef(wobject);
+    }
+
+    void dump(JNIEnv* jni) {
+        _lock.lock();
+
+        for (u32 i = 0; i < MAX_REFS; i++) {
+            jweak w = _refs[i];
+            if (w != NULL) {
+                if (!collected(w)) {
+                    Profiler::instance()->callTraceStorage()->add(_traces[i], _sizes[i]);
+                }
+                jni->DeleteWeakGlobalRef(w);
+            }
+        }
+    }
+};
+
+static LiveRefs live_refs;
+
+
+void ObjectSampler::SampledObjectAlloc(jvmtiEnv* jvmti, JNIEnv* jni, jthread thread,
+                                       jobject object, jclass object_klass, jlong size) {
     if (_enabled) {
-        recordAllocation(jvmti, BCI_ALLOC, object_klass, size);
+        recordAllocation(jvmti, jni, BCI_ALLOC, object, object_klass, size);
     }
 }
 
-void ObjectSampler::VMObjectAlloc(jvmtiEnv* jvmti, JNIEnv* jni, jthread thread,
-                                  jobject object, jclass object_klass, jlong size) {
-    if (_enabled) {
-        recordAllocation(jvmti, BCI_ALLOC_OUTSIDE_TLAB, object_klass, size);
-    }
-}
-
-void ObjectSampler::recordAllocation(jvmtiEnv* jvmti, int event_type, jclass object_klass, jlong size) {
-    if (!updateCounter(_allocated_bytes, size, _interval)) {
-        return;
-    }
-
+void ObjectSampler::recordAllocation(jvmtiEnv* jvmti, JNIEnv* jni, int event_type,
+                                     jobject object, jclass object_klass, jlong size) {
     AllocEvent event;
     event._class_id = 0;
-    event._total_size = size;
+    event._total_size = size > _interval ? size : _interval;
     event._instance_size = size;
 
     char* class_name;
@@ -58,12 +139,17 @@ void ObjectSampler::recordAllocation(jvmtiEnv* jvmti, int event_type, jclass obj
         jvmti->Deallocate((unsigned char*)class_name);
     }
 
-    Profiler::instance()->recordSample(NULL, size, event_type, &event);
+    if (_live) {
+        u32 call_trace_id = Profiler::instance()->recordSample(NULL, 0, event_type, &event);
+        live_refs.add(jni, object, size, call_trace_id);
+    } else {
+        Profiler::instance()->recordSample(NULL, size, event_type, &event);
+    }
 }
 
 Error ObjectSampler::check(Arguments& args) {
-    if (J9Ext::InstrumentableObjectAlloc_id < 0) {
-        return Error("InstrumentableObjectAlloc is not supported on this JVM");
+    if (!VM::canSampleObjects()) {
+        return Error("SampledObjectAlloc is not supported on this JVM");
     }
     return Error::OK;
 }
@@ -74,20 +160,25 @@ Error ObjectSampler::start(Arguments& args) {
         return error;
     }
 
-    _interval = args._alloc > 1 ? args._alloc : 524287;
-    _allocated_bytes = 0;
+    _interval = args._alloc > 0 ? args._alloc : DEFAULT_ALLOC_INTERVAL;
+    _live = args._live;
+
+    if (_live) {
+        live_refs.init();
+    }
 
     jvmtiEnv* jvmti = VM::jvmti();
-    if (jvmti->SetExtensionEventCallback(J9Ext::InstrumentableObjectAlloc_id, (jvmtiExtensionEvent)JavaObjectAlloc) != 0) {
-        return Error("Could not enable InstrumentableObjectAlloc callback");
-    }
-    jvmti->SetEventNotificationMode(JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
+    jvmti->SetHeapSamplingInterval(_interval);
+    jvmti->SetEventNotificationMode(JVMTI_ENABLE, JVMTI_EVENT_SAMPLED_OBJECT_ALLOC, NULL);
 
     return Error::OK;
 }
 
 void ObjectSampler::stop() {
     jvmtiEnv* jvmti = VM::jvmti();
-    jvmti->SetEventNotificationMode(JVMTI_DISABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
-    jvmti->SetExtensionEventCallback(J9Ext::InstrumentableObjectAlloc_id, NULL);
+    jvmti->SetEventNotificationMode(JVMTI_DISABLE, JVMTI_EVENT_SAMPLED_OBJECT_ALLOC, NULL);
+
+    if (_live) {
+        live_refs.dump(VM::jni());
+    }
 }

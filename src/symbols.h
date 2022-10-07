@@ -17,7 +17,6 @@
 #ifndef _SYMBOLS_H
 #define _SYMBOLS_H
 
-#include <set>
 #include "codeCache.h"
 #include "mutex.h"
 
@@ -25,14 +24,11 @@
 class Symbols {
   private:
     static Mutex _parse_lock;
-    static std::set<const void*> _parsed_libraries;
     static bool _have_kernel_symbols;
 
   public:
     static void parseKernelSymbols(CodeCache* cc);
-    static void parseLibraries(CodeCache** array, volatile int& count, int size, bool kernel_symbols);
-
-    static void makePatchable(CodeCache* cc);
+    static void parseLibraries(CodeCacheArray* array, bool kernel_symbols);
 
     static bool haveKernelSymbols() {
         return _have_kernel_symbols;

@@ -151,7 +151,7 @@ static bool setPmuConfig(const char* device, const char* param, __u64* config, _
 }
 
 
-static const void** _pthread_entry = NULL;
+static void** _pthread_entry = NULL;
 
 // Intercept thread creation/termination by patching libjvm's GOT entry for pthread_setspecific().
 // HotSpot puts VMThread into TLS on thread start, and resets on thread end.
@@ -173,9 +173,20 @@ static int pthread_setspecific_hook(pthread_key_t key, const void* value) {
     }
 }
 
-static const void** lookupThreadEntry() {
+static void** lookupThreadEntry() {
+    // Depending on Zing version, pthread_setspecific is called either from libazsys.so or from libjvm.so
+    if (VM::isZing()) {
+        CodeCache* libazsys = Profiler::instance()->findLibraryByName("libazsys");
+        if (libazsys != NULL) {
+            void** entry = libazsys->findGlobalOffsetEntry((void*)&pthread_setspecific);
+            if (entry != NULL) {
+                return entry;
+            }
+        }
+    }
+
     CodeCache* lib = Profiler::instance()->findJvmLibrary("libj9thr");
-    return lib != NULL ? lib->findGlobalOffsetEntry((const void*)&pthread_setspecific) : NULL;
+    return lib != NULL ? lib->findGlobalOffsetEntry((void*)&pthread_setspecific) : NULL;
 }
 
 
@@ -533,6 +544,7 @@ PerfEventType* PerfEvents::_event_type = NULL;
 long PerfEvents::_interval;
 Ring PerfEvents::_ring;
 CStack PerfEvents::_cstack;
+bool PerfEvents::_use_mmap_page;
 
 int PerfEvents::createForThread(int tid) {
     if (tid >= _max_events) {
@@ -579,7 +591,7 @@ int PerfEvents::createForThread(int tid) {
         attr.exclude_user = 1;
     }
 
-    if (_cstack == CSTACK_DWARF) {
+    if (_cstack == CSTACK_FP || _cstack == CSTACK_DWARF) {
         attr.exclude_callchain_user = 1;
     }
 
@@ -603,11 +615,12 @@ int PerfEvents::createForThread(int tid) {
 
     if (fd == -1) {
         int err = errno;
-        Log::warn("perf_event_open for TID %d failed: %s", tid, strerror(errno));
+        Log::warn("perf_event_open for TID %d failed: %s", tid, strerror(err));
+        _events[tid]._fd = 0;
         return err;
     }
 
-    void* page = mmap(NULL, 2 * OS::page_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void* page = _use_mmap_page ? mmap(NULL, 2 * OS::page_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : NULL;
     if (page == MAP_FAILED) {
         Log::warn("perf_event mmap failed: %s", strerror(errno));
         page = NULL;
@@ -621,14 +634,26 @@ int PerfEvents::createForThread(int tid) {
     ex.type = F_OWNER_TID;
     ex.pid = tid;
 
-    fcntl(fd, F_SETFL, O_ASYNC);
-    fcntl(fd, F_SETSIG, SIGPROF);
-    fcntl(fd, F_SETOWN_EX, &ex);
+    int err;
+    if (fcntl(fd, F_SETFL, O_ASYNC) < 0 || fcntl(fd, F_SETSIG, SIGPROF) < 0 || fcntl(fd, F_SETOWN_EX, &ex) < 0) {
+        err = errno;
+        Log::warn("perf_event fcntl failed: %s", strerror(err));
+    } else if (ioctl(fd, PERF_EVENT_IOC_RESET, 0) < 0 || ioctl(fd, PERF_EVENT_IOC_REFRESH, 1) < 0) {
+        err = errno;
+        Log::warn("perf_event ioctl failed: %s", strerror(err));
+    } else {
+        return 0;
+    }
 
-    ioctl(fd, PERF_EVENT_IOC_RESET, 0);
-    ioctl(fd, PERF_EVENT_IOC_REFRESH, 1);
+    // Failed to setup perf_event - rollback changes
+    if (page != NULL) {
+        munmap(page, 2 * OS::page_size);
+        _events[tid]._page = NULL;
+    }
+    close(fd);
+    _events[tid]._fd = 0;
 
-    return 0;
+    return err;
 }
 
 void PerfEvents::destroyForThread(int tid) {
@@ -690,10 +715,8 @@ void PerfEvents::signalHandlerJ9(int signo, siginfo_t* siginfo, void* ucontext) 
     if (_enabled) {
         u64 counter = readCounter(siginfo, ucontext);
         J9StackTraceNotification notif;
-        notif.num_frames = _cstack == CSTACK_NO ? 0 : walk(OS::threadId(), notif.addr, MAX_J9_NATIVE_FRAMES);
-        if (_cstack == CSTACK_DWARF) {
-            notif.num_frames += StackWalker::walkDwarf(ucontext, notif.addr + notif.num_frames, MAX_J9_NATIVE_FRAMES - notif.num_frames);
-        }
+        StackContext java_ctx;
+        notif.num_frames = _cstack == CSTACK_NO ? 0 : walk(OS::threadId(), ucontext, notif.addr, MAX_J9_NATIVE_FRAMES, &java_ctx);
         J9StackTraces::checkpoint(counter, &notif);
     } else {
         resetBuffer(OS::threadId());
@@ -754,7 +777,7 @@ Error PerfEvents::check(Arguments& args) {
         attr.exclude_kernel = Symbols::haveKernelSymbols() ? 0 : 1;
     }
 
-    if (_cstack == CSTACK_DWARF) {
+    if (_cstack == CSTACK_FP || _cstack == CSTACK_DWARF) {
         attr.exclude_callchain_user = 1;
     }
 
@@ -796,11 +819,12 @@ Error PerfEvents::start(Arguments& args) {
     _ring = args._ring;
     if (_ring != RING_USER && !Symbols::haveKernelSymbols()) {
         Log::warn("Kernel symbols are unavailable due to restrictions. Try\n"
-                  "  sysctl kernel.kptr_restrict=0\n"
-                  "  sysctl kernel.perf_event_paranoid=1");
+                  "  sysctl kernel.perf_event_paranoid=1\n"
+                  "  sysctl kernel.kptr_restrict=0");
         _ring = RING_USER;
     }
     _cstack = args._cstack;
+    _use_mmap_page = _cstack != CSTACK_NO && (_ring != RING_USER || _cstack == CSTACK_DEFAULT || _cstack == CSTACK_LBR);
 
     int max_events = OS::getMaxThreadId();
     if (max_events != _max_events) {
@@ -854,7 +878,7 @@ void PerfEvents::stop() {
     J9StackTraces::stop();
 }
 
-int PerfEvents::walk(int tid, const void** callchain, int max_depth) {
+int PerfEvents::walk(int tid, void* ucontext, const void** callchain, int max_depth, StackContext* java_ctx) {
     PerfEvent* event = &_events[tid];
     if (!event->tryLock()) {
         return 0;  // the event is being destroyed
@@ -880,6 +904,7 @@ int PerfEvents::walk(int tid, const void** callchain, int max_depth) {
                         const void* iptr = (const void*)ip;
                         if (CodeHeap::contains(iptr) || depth >= max_depth) {
                             // Stop at the first Java frame
+                            java_ctx->pc = iptr;
                             goto stack_complete;
                         }
                         callchain[depth++] = iptr;
@@ -892,6 +917,7 @@ int PerfEvents::walk(int tid, const void** callchain, int max_depth) {
                     // Last userspace PC is stored right after branch stack
                     const void* pc = (const void*)ring.peek(bnr * 3 + 2);
                     if (CodeHeap::contains(pc) || depth >= max_depth) {
+                        java_ctx->pc = pc;
                         goto stack_complete;
                     }
                     callchain[depth++] = pc;
@@ -902,11 +928,13 @@ int PerfEvents::walk(int tid, const void** callchain, int max_depth) {
                         ring.next();
 
                         if (CodeHeap::contains(to) || depth >= max_depth) {
+                            java_ctx->pc = to;
                             goto stack_complete;
                         }
                         callchain[depth++] = to;
 
                         if (CodeHeap::contains(from) || depth >= max_depth) {
+                            java_ctx->pc = from;
                             goto stack_complete;
                         }
                         callchain[depth++] = from;
@@ -923,6 +951,13 @@ stack_complete:
     }
 
     event->unlock();
+
+    if (_cstack == CSTACK_FP) {
+        depth += StackWalker::walkFP(ucontext, callchain + depth, max_depth - depth, java_ctx);
+    } else if (_cstack == CSTACK_DWARF) {
+        depth += StackWalker::walkDwarf(ucontext, callchain + depth, max_depth - depth, java_ctx);
+    }
+
     return depth;
 }
 

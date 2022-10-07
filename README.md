@@ -23,13 +23,13 @@ to learn about all features.
 
 ## Download
 
-Current release (2.7):
+Current release (2.8.3):
 
- - Linux x64 (glibc): [async-profiler-2.7-linux-x64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-linux-x64.tar.gz)
- - Linux x64 (musl): [async-profiler-2.7-linux-musl-x64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-linux-musl-x64.tar.gz)
- - Linux arm64: [async-profiler-2.7-linux-arm64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-linux-arm64.tar.gz)
- - macOS x64/arm64: [async-profiler-2.7-macos.zip](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/async-profiler-2.7-macos.zip)
- - Converters between profile formats: [converter.jar](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.7/converter.jar)  
+ - Linux x64 (glibc): [async-profiler-2.8.3-linux-x64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.8.3/async-profiler-2.8.3-linux-x64.tar.gz)
+ - Linux x64 (musl): [async-profiler-2.8.3-linux-musl-x64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.8.3/async-profiler-2.8.3-linux-musl-x64.tar.gz)
+ - Linux arm64: [async-profiler-2.8.3-linux-arm64.tar.gz](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.8.3/async-profiler-2.8.3-linux-arm64.tar.gz)
+ - macOS x64/arm64: [async-profiler-2.8.3-macos.zip](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.8.3/async-profiler-2.8.3-macos.zip)
+ - Converters between profile formats: [converter.jar](https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.8.3/converter.jar)  
    (JFR to Flame Graph, JFR to FlameScope, collapsed stacks to Flame Graph)
 
 [Previous releases](https://github.com/jvm-profiling-tools/async-profiler/releases)
@@ -255,7 +255,7 @@ $ java -agentpath:/path/to/libasyncProfiler.so=start,event=cpu,file=profile.html
 
 Agent library is configured through the JVMTI argument interface.
 The format of the arguments string is described
-[in the source code](https://github.com/jvm-profiling-tools/async-profiler/blob/v2.7/src/arguments.cpp#L52).
+[in the source code](https://github.com/jvm-profiling-tools/async-profiler/blob/v2.8.3/src/arguments.cpp#L52).
 The `profiler.sh` script actually converts command line arguments to that format.
 
 For instance, `-e wall` is converted to `event=wall`, `-f profile.html`
@@ -327,8 +327,10 @@ The following is a complete list of the command-line options accepted by
 * `status` - prints profiling status: whether profiler is active and
   for how long.
 
-* `list` - show the list of available profiling events. This option still
-  requires PID, since supported events may differ depending on JVM version.
+* `meminfo` - prints used memory statistics.
+
+* `list` - show the list of profiling events available for the target process
+  (if PID is specified) or for the default JVM.
 
 * `-d N` - the profiling duration, in seconds. If no `start`, `resume`, `stop`
   or `status` option is given, the profiler will run for the specified period
@@ -364,6 +366,10 @@ The following is a complete list of the command-line options accepted by
 * `--alloc N` - allocation profiling interval in bytes or in other units,
   if N is followed by `k` (kilobytes), `m` (megabytes), or `g` (gigabytes).
 
+* `--live` - retain allocation samples with live objects only
+  (object that have not been collected by the end of profiling session).
+  Useful for finding Java heap memory leaks.
+
 * `--lock N` - lock profiling threshold in nanoseconds (or other units).
   In lock profiling mode, record contended locks that the JVM has waited for
   longer than the specified duration.
@@ -380,7 +386,7 @@ The following is a complete list of the command-line options accepted by
 
 * `-g` - print method signatures.
 
-* `-a` - annotate Java method names by adding `_[j]` suffix.
+* `-a` - annotate JIT compiled methods with `_[j]` and inlined methods with `_[i]`.
 
 * `-l` - prepend library names to symbols, e.g. ``libjvm.so`JVM_DefineClassWithSource``.
 
@@ -418,6 +424,7 @@ The following is a complete list of the command-line options accepted by
 * `-f FILENAME` - the file name to dump the profile information to.  
   `%p` in the file name is expanded to the PID of the target JVM;  
   `%t` - to the timestamp;  
+  `%n{MAX}` - to the sequence number;  
   `%{ENV}` - to the value of the given environment variable.  
   Example: `./profiler.sh -o collapsed -f /tmp/traces-%t.txt 8983`
 

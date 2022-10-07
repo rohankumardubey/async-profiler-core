@@ -24,6 +24,7 @@
 
 class PerfEvent;
 class PerfEventType;
+class StackContext;
 
 class PerfEvents : public Engine {
   private:
@@ -33,6 +34,7 @@ class PerfEvents : public Engine {
     static long _interval;
     static Ring _ring;
     static CStack _cstack;
+    static bool _use_mmap_page;
 
     static u64 readCounter(siginfo_t* siginfo, void* ucontext);
     static void signalHandler(int signo, siginfo_t* siginfo, void* ucontext);
@@ -46,7 +48,7 @@ class PerfEvents : public Engine {
     const char* title();
     const char* units();
 
-    static int walk(int tid, const void** callchain, int max_depth);
+    static int walk(int tid, void* ucontext, const void** callchain, int max_depth, StackContext* java_ctx);
     static void resetBuffer(int tid);
 
     static bool supported();

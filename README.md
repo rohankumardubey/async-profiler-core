@@ -30,7 +30,7 @@ Current release (2.8.3):
 [Previous releases](https://github.com/jvm-profiling-tools/async-profiler/releases)
 
 Note: async-profiler also comes bundled with IntelliJ IDEA Ultimate 2018.3 and later.
-For more information refer to [IntelliJ IDEA documentation](https://www.jetbrains.com/help/idea/cpu-profiler.html).
+For more information refer to [IntelliJ IDEA documentation](https://www.jetbrains.com/help/idea/cpu-and-allocation-profiling-basic-concepts.html).
 
 ## Supported platforms
 
@@ -170,7 +170,8 @@ Make sure the `JAVA_HOME` environment variable points to your JDK installation,
 and then run `make`. GCC is required. After building, the profiler agent binary
 will be in the `build` subdirectory. Additionally, a small application `jattach`
 that can load the agent into the target process will also be compiled to the
-`build` subdirectory.
+`build` subdirectory. If the build fails due to
+`Source option 7 is no longer supported. Use 8 or later.`, use `make JAVA_TARGET=8`.
 
 ## Basic Usage
 
